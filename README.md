@@ -25,7 +25,7 @@ Current and planned structure:
 ```text
 Income_Dis_Est_Ser16/
 ├── notebooks/
-│   ├── 01_ipuma.Rmd     # Planned Cleans the IPUMS data produces a usable CSV for future steps.     
+│   ├── 01_ipums.Rmd     # Planned Cleans the IPUMS data produces a usable CSV for future steps.     
 │   ├── 02_full_model.Rmd      # Planned Produces forecasts based on the full model (all variables for all brackets) ideally export results to an excel file automatically. 
 │   ├── 03_bespoke_model.Rmd  # Planned uses the results from the full model and reruns each logit with only statistically significant variables, confirms by comparing F test and R squared
 │   ├── 04_ppo_logit.Rmd     # Planned produces a partial parallel ordered logit. Uses a modified Wald test to determine which variables should use parallel trends. 
@@ -83,8 +83,8 @@ Planned notebook: `notebooks/02_full_model.Rmd`
 Expected output: `full_model.xlsx` May also produce a an intermediate file saving the R models for future prediction 
 
 Completed:
-- [X] create complex survey design 
-- [X]  Create loopable model for regressions over income catagories
+- [X] Create complex survey design.
+- [X] Create loopable model for regressions over income catagories.
 
 Remaining:
 - [ ] Load IPUMS csv data.
