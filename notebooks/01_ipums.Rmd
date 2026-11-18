@@ -208,33 +208,31 @@ incrementing_labels <- paste0("Inc", 1:num_intervals)
 
 # creates the ordered factor variable Income_Cat left closed for each cut
 data <- data %>%
-  mutate(
-    Inc= cut(
+  mutate(IncCat= cut(
     ADJ_HHINCOME, # the continuous variable being cut
     breaks = cut_points, # where to make the cuts
     labels = incrementing_labels, # how to label each bracket
     right = FALSE, # left close eg Inc1 is [0,15000) Inc2 [15000,30000)
     ordered_result = TRUE, # this is an ordered factor so Inc1< Inc2<...<Inc14
-                 ),
-    IncCat=Inc) # preserves the bucket variable after the next step
+                 )
+    ) # preserves the bucket variable after the next step
 
- 
-#creates the binary variables 
-data<- data  %>%
-  mutate(val = 1) %>% # creates a variable of all 1's to be used later
-  # Pivot into wide format, filling missing categories with 0
-  pivot_wider(
-    names_from = Inc, #From Income_Cat variables
-    values_from = val, #pulls in 1 if the observation is in the category
-    values_fill = 0, #sets the values not equal to 1 to zero rather than say NA
-    names_expand = TRUE # Ensures all 14 levels become columns, even if there is no observation at that level
-  )
+
+# Create the 14 binary columns (Inc1 to Inc14)  
+dummies <- as.data.frame(model.matrix(~ IncCat - 1, data = data))
+
+# Remove the "IncCat" prefix so column names are simply Inc1, Inc2, ..., Inc14
+colnames(dummies) <- sub("^IncCat", "", colnames(dummies))
+
+# Bind them to the dataset 
+data <- bind_cols(data, dummies)
+
 
 ACS_2019_1Y <- data  
 # # Collapse into households, this keeps the first row of each SERIALNO
 # HH <- data %>% distinct(SERIAL, .keep_all = TRUE)
 
-rm(data, data_HH, ddi, ipums_data, years, year_check)
+rm(data, data_HH, ddi, ipums_data, years, year_check, dummies)
 
 
 
@@ -404,32 +402,30 @@ incrementing_labels <- paste0("Inc", 1:num_intervals)
 
 # creates the ordered factor variable Income_Cat left closed for each cut
 data <- data %>%
-  mutate(Inc= cut(
+  mutate(IncCat= cut(
     ADJ_HHINCOME, # the continuous variable being cut
     breaks = cut_points, # where to make the cuts
     labels = incrementing_labels, # how to label each bracket
     right = FALSE, # left close eg Inc1 is [0,15000) Inc2 [15000,30000)
     ordered_result = TRUE, # this is an ordered factor so Inc1< Inc2<...<Inc14
-                 ),
-    IncCat=Inc) # preserves the bucket variable after the next step
+                 )
+    ) # preserves the bucket variable after the next step
 
- 
-#creates the binary variables 
-data<- data  %>%
-  mutate(val = 1) %>% # creates a variable of all 1's to be used later
-  # Pivot into wide format, filling missing categories with 0
-  pivot_wider(
-    names_from = Inc, #From Income_Cat variables
-    values_from = val, #pulls in 1 if the observation is in the category
-    values_fill = 0, #sets the values not equal to 1 to zero rather than say NA
-    names_expand = TRUE # Ensures all 14 levels become columns, even if there is no observation at that level
-  )
+
+# Create the 14 binary columns (Inc1 to Inc14)  
+dummies <- as.data.frame(model.matrix(~ IncCat - 1, data = data))
+
+# Remove the "IncCat" prefix so column names are simply Inc1, Inc2, ..., Inc14
+colnames(dummies) <- sub("^IncCat", "", colnames(dummies))
+
+# Bind them to the dataset 
+data <- bind_cols(data, dummies)
 
 ACS_2022_1Y <- data  
 # # Collapse into households, this keeps the first row of each SERIALNO
 # HH <- data %>% distinct(SERIAL, .keep_all = TRUE)
 
-rm(data, data_HH, ddi, ipums_data, years)
+rm(data, data_HH, ddi, ipums_data, years, dummies)
 
 
 ```
@@ -597,32 +593,31 @@ incrementing_labels <- paste0("Inc", 1:num_intervals)
 
 # creates the ordered factor variable Income_Cat left closed for each cut
 data <- data %>%
-  mutate(Inc= cut(
+  mutate(IncCat= cut(
     ADJ_HHINCOME, # the continuous variable being cut
     breaks = cut_points, # where to make the cuts
     labels = incrementing_labels, # how to label each bracket
     right = FALSE, # left close eg Inc1 is [0,15000) Inc2 [15000,30000)
     ordered_result = TRUE, # this is an ordered factor so Inc1< Inc2<...<Inc14
-                 ),
-    IncCat=Inc) # preserves the bucket variable after the next step
+                 )
+    ) # preserves the bucket variable after the next step
 
- 
-#creates the binary variables 
-data<- data  %>%
-  mutate(val = 1) %>% # creates a variable of all 1's to be used later
-  # Pivot into wide format, filling missing categories with 0
-  pivot_wider(
-    names_from = Inc, #From Income_Cat variables
-    values_from = val, #pulls in 1 if the observation is in the category
-    values_fill = 0, #sets the values not equal to 1 to zero rather than say NA
-    names_expand = TRUE # Ensures all 14 levels become columns, even if there is no observation at that level
-  )
+
+# Create the 14 binary columns (Inc1 to Inc14)  
+dummies <- as.data.frame(model.matrix(~ IncCat - 1, data = data))
+
+# Remove the "IncCat" prefix so column names are simply Inc1, Inc2, ..., Inc14
+colnames(dummies) <- sub("^IncCat", "", colnames(dummies))
+
+# Bind them to the dataset 
+data <- bind_cols(data, dummies)
+
 
 ACS_2024_1Y <- data  
 # # Collapse into households, this keeps the first row of each SERIALNO
 # HH <- data %>% distinct(SERIAL, .keep_all = TRUE)
 
-rm(data, data_HH, ddi, ipums_data, years)
+rm(data, data_HH, ddi, ipums_data, years, dummies)
 
 
 ```
@@ -658,7 +653,9 @@ ACS_Means <- lapply(years, function(yr) {
       ChildPresent = weighted.mean(ChildPresent, HHWT),
       AGE = weighted.mean(AGE, HHWT),
       SEX = weighted.mean(SEX, HHWT),
-      LF = weighted.mean(LF, HHWT)
+      LF = weighted.mean(LF, HHWT),
+      HHSize = weighted.mean(HHSize, HHWT),
+      NHH = sum(HHWT)
     )
 })
 

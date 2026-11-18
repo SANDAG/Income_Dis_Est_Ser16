@@ -17,13 +17,37 @@ library(svyVGAM) # used for PPO regressions with complex survey designs
 source(here::here("R", "load_config.R"))
 cfg <- load_config()
 
-# Construct output file path
-input_file <- file.path(
+# Construct input file path
+input_2024 <- file.path(
   cfg$paths$output_dir,
   cfg$IPUMS$output_file_2024_1year
 )
- 
-stopifnot(file.exists(input_file))
+
+input_2019 <- file.path(
+  cfg$paths$output_dir,
+  cfg$IPUMS$output_file_2019_1year
+)
+
+input_means <- file.path(
+  cfg$paths$output_dir,
+  cfg$IPUMS$outout_file_ACS_1year_means
+)
+
+input_dis <- file.path(
+  cfg$paths$output_dir,
+  cfg$IPUMS$output_file_ACS_1year_IncDis
+)
+
+
+## independent variables to be used in the regessions below.  This means you only
+## need to update them here.
+
+x_vector <- ("HHSize + ChildPresent + SeniorPresent + AGE + LF + SEX + HHSize*ChildPresent ") 
+
+stopifnot(file.exists(input_2019))
+stopifnot(file.exists(input_2024))
+stopifnot(file.exists(input_means))
+stopifnot(file.exists(input_dis))
 
 ```
 
@@ -31,36 +55,22 @@ stopifnot(file.exists(input_file))
  
 ```{r}
 
-ACS_1year_2024 <- read.csv(file.path(input_file))
+ACS_1year_2024 <- read.csv(file.path(input_2024)) ## loads 2024 data
 
+ACS_1year_means <-read.csv(file.path(input_means))
+
+ACS_1year_dis <-read.csv(file.path(input_dis))
 
 Weighted_IPUMS <-as_survey(ACS_1year_2024, id=CLUSTER,
                            weights=HHWT,
                            strata=STRATA,
                            nest=TRUE)
 
-
- 
-
- 
-##Comparison of mean HH Income to show the difference from weighing
-
-# un-weighted mean income
-Weighted_IPUMS%>% summarize(mean_value = mean(ADJ_HHINCOME, na.rm = TRUE))
-#weighted mean income 
-Weighted_IPUMS%>% summarize(mean_value = survey_mean(ADJ_HHINCOME, na.rm = TRUE))
-
-# and showing it works for our generated variables
-#proportion of houses with children un-weighted
-Weighted_IPUMS%>% summarize(mean_value = mean(ChildPresent, na.rm = TRUE))
-#weighted proportion of houses with children
-Weighted_IPUMS%>% summarize(mean_value = survey_mean(ChildPresent, na.rm = TRUE))
-
 ## This is to loop over the different logit models in R and produce 1 result for each
 
 y_vector <-  names(ACS_1year_2024 %>% select(num_range("Inc", 1:14))) # vector of Inc to loop over
 
-x_vector <- ("HHSize + ChildPresent + SeniorPresent + AGE + LF + SEX") ## independent variables
+x_vector <- ("HHSize + ChildPresent + SeniorPresent + AGE + LF + SEX + HHSize*ChildPresent") ## independent variables
 
 ## the for loop using lapply, takes in the vector of Inc varriables, combines
 ## the formula of x and y varriables, then runs them through the svglm function
@@ -77,8 +87,214 @@ models <- lapply(y_vector, function(y) {
 
 names(models) <- y_vector
 
+# Generate predicted probabilities
+pred_matrix <- sapply(models, function(mod) {
+  predict(mod,
+          newdata = ACS_1year_means,
+          type = "response")
+})
+
+pred_matrix_2024 <- as.data.frame(pred_matrix) %>%
+  mutate(YEAR = ACS_1year_means$YEAR) %>%
+  relocate(YEAR)
+
+# Sum probabilities across income categories for each observation
+rowSums(pred_matrix)
 
 
+# multinomial logit
+mnl <- svy_vglm(
+  as.formula(paste("IncCat ~", x_vector)),
+  design = Weighted_IPUMS,
+  family = multinomial(refLevel = "Inc1")
+)
+
+
+mlogit_predictions <- predict(mnl,
+                             newdata = ACS_1year_means,
+                             type="response"
+)
+
+
+# Reorder columns numerically (Inc1, Inc2, ..., Inc14)
+ordered_cols <- str_sort(colnames(mlogit_predictions), numeric = TRUE)
+mlogit_predictions <- mlogit_predictions[, ordered_cols, drop = FALSE]
+
+mlogit_predictions_2024 <- as.data.frame(mlogit_predictions) %>%
+  mutate(YEAR = ACS_1year_means$YEAR) %>%
+  relocate(YEAR)
+
+rm(mnl, pred_matrix , models, y_vector, mlogit_predictions)
+
+
+
+```
+
+
+## load the 2019 data
+ 
+```{r}
+
+ACS_1year_2019 <- read.csv(file.path(input_2019)) ## loads 2024 data
+
+ACS_1year_means <-read.csv(file.path(input_means))
+
+ACS_1year_dis <-read.csv(file.path(input_dis))
+
+Weighted_IPUMS <-as_survey(ACS_1year_2019, id=CLUSTER,
+                           weights=HHWT,
+                           strata=STRATA,
+                           nest=TRUE)
+ 
+
+
+## This is to loop over the different logit models in R and produce 1 result for each
+
+y_vector <-  names(ACS_1year_2019 %>% select(num_range("Inc", 1:14))) # vector of Inc to loop over
+
+
+## the for loop using lapply, takes in the vector of Inc varriables, combines
+## the formula of x and y varriables, then runs them through the svglm function
+## saves the results in the models object.  
+models <- lapply(y_vector, function(y) {
+  
+  logitformula <- reformulate(termlabels = x_vector, response = y)
+  
+  svyglm(logitformula, design = Weighted_IPUMS, family =  binomial (link = "logit"))
+})
+
+## adds the Inc# as the name of the lists stored in models, easier to call
+## e.g. if you want the results for Inc1 you can call models$Inc1 
+
+names(models) <- y_vector 
+
+# Generate predicted probabilities
+pred_matrix <- sapply(models, function(mod) {
+  predict(mod,
+          newdata = ACS_1year_means,
+          type = "response")
+})
+
+# Sum probabilities across income categories for each observation
+rowSums(pred_matrix)
+
+pred_matrix_2019 <-as.data.frame(pred_matrix) %>%
+  mutate(YEAR = ACS_1year_means$YEAR) %>%
+  relocate(YEAR)
+
+ 
+# multinomial logit
+mnl <- svy_vglm(
+  as.formula(paste("IncCat ~", x_vector)),
+  design = Weighted_IPUMS,
+  family = multinomial(refLevel = "Inc1")
+)
+
+mlogit_predictions <- predict(mnl,
+                             newdata = ACS_1year_means,
+                             type="response"
+)
+
+
+# Reorder columns numerically (Inc1, Inc2, ..., Inc14)
+ordered_cols <- str_sort(colnames(mlogit_predictions), numeric = TRUE)
+mlogit_predictions <- mlogit_predictions[, ordered_cols, drop = FALSE]
+
+
+
+
+mlogit_predictions_2019 <- as.data.frame(mlogit_predictions) %>%
+  mutate(YEAR = ACS_1year_means$YEAR) %>%
+  relocate(YEAR)
+
+rm(mnl, pred_matrix , models, y_vector, mlogit_predictions)
+
+```
+
+## Export csv for later use
+
+```{r}
+
+
+stopifnot(!is.null(cfg$paths$output_dir))
+
+## export individual logit predictions 2024 data
+
+# Create output directory if it does not exist
+dir.create(
+  cfg$paths$output_dir,
+  recursive = TRUE,
+  showWarnings = FALSE
+)
+
+years <- c("2019", "2024")
+
+## make a list of output matrices for individual logits
+pred_matrices <- list(
+  `2019` = pred_matrix_2019,
+  `2024` = pred_matrix_2024
+)
+
+## prediction for Multi nomial logits
+
+mlogit_predictions <- list(
+  `2019` = mlogit_predictions_2019,
+  `2024` = mlogit_predictions_2024
+)
+
+## file list for export for logits
+logit_files <- list(
+  `2019` = cfg$Predict$output_file_logit_2019_1year,
+  `2024` = cfg$Predict$output_file_logit_2024_1year
+)
+
+## file list for export for Mlogits
+mult_files <- list(
+  `2019` = cfg$Predict$output_file_Mult_2019_1year,
+  `2024` = cfg$Predict$output_file_Mult_2024_1year
+)
+
+# uses pred_matricies but any would work
+for (yr in years) {
+  
+  print(yr)
+  
+  print(cfg$paths$output_dir)
+  
+  print(mult_files[[yr]])
+  
+  # create filepath for logits 
+  output_logit <- file.path(
+    cfg$paths$output_dir,
+    logit_files[[yr]]
+  )
+
+  # create file paths for multinomial logits
+  
+ output_mult <- file.path(
+    cfg$paths$output_dir,
+    mult_files[[yr]]
+  )
+ 
+ # write csv for logit
+  write.csv(
+    pred_matrices[[yr]],
+    output_logit,
+    row.names = FALSE
+  )
+
+
+# write csv for multinational logit 
+  write.csv(
+    mlogit_predictions[[yr]],
+    output_mult,
+    row.names = FALSE
+  )
+  
+ 
+ 
+  
+}
 
 ```
 
