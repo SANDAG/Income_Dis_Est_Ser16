@@ -98,10 +98,10 @@ Completed:
 - [X] create complex survey design.
 - [X] Input predicted values for independent variables and output predicted percentages.
 - [X] Row sum the probabilities to ensure they are close to 1, fall back to mlogit if not.
+- [X] Export the predicted probabilities in an csv format.  
       
 Remaining:
-
-- [ ] Export the predicted probabilities in an excel format.  
+ 
 - [ ] Document variable definitions, temporal coverage, and known limitations.
 
 ### Phase 3 — Bespoke model
