@@ -56,7 +56,7 @@ Notebooks should document each analytical stage. As processing becomes more comp
 
 Notebook: `notebooks/01_ipums.Rmd`
 
-Outputs: `ipums_acs_2019_1year.csv` `ipums_acs_5year.csv`
+Outputs: `IPUMS_HH_2019_ACS1Y.csv` `IPUMS_HH_2022_ACS1Y.csv` `IPUMS_HH_2024_ACS1Y.csv` `IPUMS_HH_2019_ACS5Y.csv`  `IPUMS_HH_2022_ACS5Y.csv` `IPUMS_HH_2024_ACS5Y.csv` 
 
 Completed:
 - [X] Load IPUMS metadata and microdata for 1 year ACS.
