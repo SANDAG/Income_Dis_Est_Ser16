@@ -52,20 +52,25 @@ Notebooks should document each analytical stage. As processing becomes more comp
 
 ### Phase 1 — IPUMS Socioeconomic Data
 
-**Status: Not started. Highest-priority new development task.**
+**Status: Completed for 1 year ACS, 5 year ACS requires additional handling for inflation adjustment and unique HH Identifiers. Highest-priority new development task.**
 
 Notebook: `notebooks/01_ipums.Rmd`
 
-Outputs: `ipums_acs_1year.csv` `ipums_acs_5year.csv`
+Outputs: `ipums_acs_2019_1year.csv` `ipums_acs_5year.csv`
 
+Completed:
+- [X] Load IPUMS metadata and microdata for 1 year ACS.
+- [X] Load IPUMS metadata and microdata for 5 year ACS. 
+- [X] Filter to San Diego County.
+- [X] Construct household level data (Children, Senior, Age).
+- [X] Filter data to head of household level.
+- [X] Adjust incomes to 2022 base year  
+- [X] Create income catagory varriables (Ologit, Mlogit)
+- [X] Create separate binary indicator income category variables 
+      
 Remaining:
-- [ ] Load IPUMS metadata and microdata for both 1 year and 5 year ACS.
-- [ ] Filter to San Diego County.
-- [ ] Construct household level data (Children, Senior, Age).
-- [ ] Filter data to head of household level.
-- [ ] Create income catagory varriables (Ologit, Mlogit)
-- [ ] Create separate binary indicator income category variables 
-- [ ] Add basic data-quality checks.
+
+- [ ] Add basic data-quality checks. (partial)
 - [ ] Export CSVs and verify successful read-back.
 - [ ] Compare outputs against the legacy workflow.
 - [ ] Review for any missing values.
