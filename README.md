@@ -66,15 +66,15 @@ Completed:
 - [X] Filter data to head of household level.
 - [X] Adjust incomes to 2022 base year  
 - [X] Create income catagory varriables (Ologit, Mlogit)
-- [X] Create separate binary indicator income category variables 
+- [X] Create separate binary indicator income category variables
+- [X] Export CSVs and verify successful read-back.
+- [X] Review IPUMS person/household weighting assumptions.
       
 Remaining:
 
 - [ ] Add basic data-quality checks. (partial)
-- [ ] Export CSVs and verify successful read-back.
 - [ ] Compare outputs against the legacy workflow.
 - [ ] Review for any missing values.
-- [ ] Review IPUMS person/household weighting assumptions.
 - [ ] Document variable definitions, temporal coverage, and known limitations.
 
 ### Phase 2 — Full model
