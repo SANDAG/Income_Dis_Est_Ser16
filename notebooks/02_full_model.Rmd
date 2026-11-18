@@ -1,0 +1,84 @@
+---
+title: "02_full_model.Rmd"
+output: html_document
+date: "2026-11-18"
+---
+
+```{r setup}
+knitr::opts_chunk$set(echo = TRUE)
+
+
+library("dplyr") # data cleaning and handling
+library("modelsummary") # outputting results where needed
+library(srvyr) # used for logit regressions with complex survey designs
+library(svyVGAM) # used for PPO regressions with complex survey designs 
+ 
+# Load project configuration
+source(here::here("R", "load_config.R"))
+cfg <- load_config()
+
+# Construct output file path
+input_file <- file.path(
+  cfg$paths$output_dir,
+  cfg$IPUMS$output_file_2024_1year
+)
+ 
+stopifnot(file.exists(input_file))
+
+```
+
+## load the 2024 data
+ 
+```{r}
+
+ACS_1year_2024 <- read.csv(file.path(input_file))
+
+
+Weighted_IPUMS <-as_survey(ACS_1year_2024, id=CLUSTER,
+                           weights=HHWT,
+                           strata=STRATA,
+                           nest=TRUE)
+
+
+ 
+
+ 
+##Comparison of mean HH Income to show the difference from weighing
+
+# un-weighted mean income
+Weighted_IPUMS%>% summarize(mean_value = mean(ADJ_HHINCOME, na.rm = TRUE))
+#weighted mean income 
+Weighted_IPUMS%>% summarize(mean_value = survey_mean(ADJ_HHINCOME, na.rm = TRUE))
+
+# and showing it works for our generated variables
+#proportion of houses with children un-weighted
+Weighted_IPUMS%>% summarize(mean_value = mean(ChildPresent, na.rm = TRUE))
+#weighted proportion of houses with children
+Weighted_IPUMS%>% summarize(mean_value = survey_mean(ChildPresent, na.rm = TRUE))
+
+## This is to loop over the different logit models in R and produce 1 result for each
+
+y_vector <-  names(ACS_1year_2024 %>% select(num_range("Inc", 1:14))) # vector of Inc to loop over
+
+x_vector <- ("HHSize + ChildPresent + SeniorPresent + AGE + LF + SEX") ## independent variables
+
+## the for loop using lapply, takes in the vector of Inc varriables, combines
+## the formula of x and y varriables, then runs them through the svglm function
+## saves the results in the models object.  
+models <- lapply(y_vector, function(y) {
+  
+  logitformula <- reformulate(termlabels = x_vector, response = y)
+  
+  svyglm(logitformula, design = Weighted_IPUMS, family =  binomial (link = "logit"))
+})
+
+## adds the Inc# as the name of the lists stored in models, easier to call
+## e.g. if you want the results for Inc1 you can call models$Inc1 
+
+names(models) <- y_vector
+
+
+
+
+```
+

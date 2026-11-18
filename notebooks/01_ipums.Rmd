@@ -127,9 +127,9 @@ rm(HHChild)
 # 0 no, 1 yes
 
 HHSenior <- subset(data_HH, select = c(SERIAL, AGE)) %>%
-  mutate(Senior_Present = if_else(AGE>=65,1,0)) %>%
+  mutate(SeniorPresent = if_else(AGE>=65,1,0)) %>%
   dplyr::group_by(SERIAL) %>%
-  dplyr::summarise(Senior_Present = max(Senior_Present, na.rm=TRUE))
+  dplyr::summarise(SeniorPresent = max(SeniorPresent, na.rm=TRUE))
 
 data <- data %>% right_join(HHSenior, by=c("SERIAL"))
 rm(HHSenior )
@@ -323,9 +323,9 @@ rm(HHChild)
 # 0 no, 1 yes
 
 HHSenior <- subset(data_HH, select = c(SERIAL, AGE)) %>%
-  mutate(Senior_Present = if_else(AGE>=65,1,0)) %>%
+  mutate(SeniorPresent = if_else(AGE>=65,1,0)) %>%
   dplyr::group_by(SERIAL) %>%
-  dplyr::summarise(Senior_Present = max(Senior_Present, na.rm=TRUE))
+  dplyr::summarise(SeniorPresent = max(SeniorPresent, na.rm=TRUE))
 
 data <- data %>% right_join(HHSenior, by=c("SERIAL"))
 rm(HHSenior )
@@ -513,9 +513,9 @@ rm(HHChild)
 # 0 no, 1 yes
 
 HHSenior <- subset(data_HH, select = c(SERIAL, AGE)) %>%
-  mutate(Senior_Present = if_else(AGE>=65,1,0)) %>%
+  mutate(SeniorPresent = if_else(AGE>=65,1,0)) %>%
   dplyr::group_by(SERIAL) %>%
-  dplyr::summarise(Senior_Present = max(Senior_Present, na.rm=TRUE))
+  dplyr::summarise(SeniorPresent = max(SeniorPresent, na.rm=TRUE))
 
 data <- data %>% right_join(HHSenior, by=c("SERIAL"))
 rm(HHSenior )
