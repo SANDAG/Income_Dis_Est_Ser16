@@ -69,13 +69,15 @@ Completed:
 - [X] Create separate binary indicator income category variables
 - [X] Export CSVs and verify successful read-back.
 - [X] Review IPUMS person/household weighting assumptions.
+- [X] Create IPUMS observed averages for 2019, 2022, 2024
+- [X] Create IPUMS observed HH per income bracket for 2019,2022,2024
+- [X] Review for any missing values.
       
 Remaining:
 
-- [ ] Create IPUMS observed averages for 2019, 2022, 2024
+
 - [ ] Add basic data-quality checks. (partial)
 - [ ] Compare outputs against the legacy workflow.
-- [ ] Review for any missing values.
 - [ ] Document variable definitions, temporal coverage, and known limitations.
 
 ### Phase 2 — Full model
@@ -94,11 +96,11 @@ Completed:
 - [X] Load IPUMS csv data.
 - [X] Filter to San Diego County, and year = 2024.
 - [X] create complex survey design.
+- [X] Input predicted values for independent variables and output predicted percentages.
+- [X] Row sum the probabilities to ensure they are close to 1, fall back to mlogit if not.
       
 Remaining:
 
-- [ ] Input predicted values for independent variables and output predicted percentages.
-- [ ] Row sum the probabilities to ensure they are close to 1, fall back to mlogit if not.
 - [ ] Export the predicted probabilities in an excel format.  
 - [ ] Document variable definitions, temporal coverage, and known limitations.
 
