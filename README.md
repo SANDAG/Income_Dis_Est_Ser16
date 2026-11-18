@@ -25,7 +25,7 @@ Current and planned structure:
 ```text
 Income_Dis_Est_Ser16/
 ├── notebooks/
-│   ├── 01_ipums.Rmd     # Planned Cleans the IPUMS data produces a usable CSV for future steps.     
+│   ├── 01_ipums.Rmd     # Planned Cleans the IPUMS data produces a usable CSV for future steps. 
 │   ├── 02_full_model.Rmd      # Planned Produces forecasts based on the full model (all variables for all brackets) ideally export results to an excel file automatically. 
 │   ├── 03_bespoke_model.Rmd  # Planned uses the results from the full model and reruns each logit with only statistically significant variables, confirms by comparing F test and R squared
 │   ├── 04_ppo_logit.Rmd     # Planned produces a partial parallel ordered logit. Uses a modified Wald test to determine which variables should use parallel trends. 
@@ -66,15 +66,16 @@ Completed:
 - [X] Filter data to head of household level.
 - [X] Adjust incomes to 2022 base year  
 - [X] Create income catagory varriables (Ologit, Mlogit)
-- [X] Create separate binary indicator income category variables 
+- [X] Create separate binary indicator income category variables
+- [X] Export CSVs and verify successful read-back.
+- [X] Review IPUMS person/household weighting assumptions.
       
 Remaining:
 
+- [ ] Create IPUMS observed averages for 2019, 2022, 2024
 - [ ] Add basic data-quality checks. (partial)
-- [ ] Export CSVs and verify successful read-back.
 - [ ] Compare outputs against the legacy workflow.
 - [ ] Review for any missing values.
-- [ ] Review IPUMS person/household weighting assumptions.
 - [ ] Document variable definitions, temporal coverage, and known limitations.
 
 ### Phase 2 — Full model
@@ -90,11 +91,12 @@ Expected output: `full_model.xlsx` May also produce a an intermediate file savin
 Completed:
 - [X] Create complex survey design.
 - [X] Create loopable model for regressions over income catagories.
-
+- [X] Load IPUMS csv data.
+- [X] Filter to San Diego County, and year = 2024.
+- [X] create complex survey design.
+      
 Remaining:
-- [ ] Load IPUMS csv data.
-- [ ] Filter to San Diego County, and year = 2024.
-- [ ] create complex survey design .
+
 - [ ] Input predicted values for independent variables and output predicted percentages.
 - [ ] Row sum the probabilities to ensure they are close to 1, fall back to mlogit if not.
 - [ ] Export the predicted probabilities in an excel format.  
