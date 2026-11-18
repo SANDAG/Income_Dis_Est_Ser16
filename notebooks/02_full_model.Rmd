@@ -70,8 +70,6 @@ Weighted_IPUMS <-as_survey(ACS_1year_2024, id=CLUSTER,
 
 y_vector <-  names(ACS_1year_2024 %>% select(num_range("Inc", 1:14))) # vector of Inc to loop over
 
-x_vector <- ("HHSize + ChildPresent + SeniorPresent + AGE + LF + SEX + HHSize*ChildPresent") ## independent variables
-
 ## the for loop using lapply, takes in the vector of Inc varriables, combines
 ## the formula of x and y varriables, then runs them through the svglm function
 ## saves the results in the models object.  
@@ -291,7 +289,8 @@ for (yr in years) {
     row.names = FALSE
   )
   
- 
+ #clean up the memory
+rm(list = ls())
  
   
 }
