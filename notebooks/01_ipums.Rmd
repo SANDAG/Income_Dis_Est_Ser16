@@ -58,6 +58,24 @@ stopifnot(file.exists(ipums_2024_5year))
 
 ddi <-read_ipums_ddi(ipums_2019)
 
+
+year_check <- read_ipums_micro(
+  ddi,
+  vars = "YEAR"
+)
+
+## check it is the right year before we even fully load the dataset
+years <- unique(year_check$YEAR)
+
+if (!all(years == 2019)) {
+  stop(
+    sprintf(
+      "Expected YEAR=2022. Found: %s",
+      paste(sort(years), collapse = ", ")
+    )
+  )
+}
+
 #load the full dataset
 ipums_data <- read_ipums_micro(ddi)
 
@@ -190,13 +208,15 @@ incrementing_labels <- paste0("Inc", 1:num_intervals)
 
 # creates the ordered factor variable Income_Cat left closed for each cut
 data <- data %>%
-  mutate(Inc= cut(
+  mutate(
+    Inc= cut(
     ADJ_HHINCOME, # the continuous variable being cut
     breaks = cut_points, # where to make the cuts
     labels = incrementing_labels, # how to label each bracket
     right = FALSE, # left close eg Inc1 is [0,15000) Inc2 [15000,30000)
     ordered_result = TRUE, # this is an ordered factor so Inc1< Inc2<...<Inc14
-                 ))
+                 ),
+    IncCat=Inc) # preserves the bucket variable after the next step
 
  
 #creates the binary variables 
@@ -214,7 +234,7 @@ ACS_2019_1Y <- data
 # # Collapse into households, this keeps the first row of each SERIALNO
 # HH <- data %>% distinct(SERIAL, .keep_all = TRUE)
 
-rm(data, data_HH, ddi, ipums_data, years)
+rm(data, data_HH, ddi, ipums_data, years, year_check)
 
 
 
@@ -368,8 +388,8 @@ data<- data %>%
 # drop incomes less than zero 
 data <- data %>% filter(HHINCOME > 0)
 
-## we adjust to 2022 base year so the adjustment here is 1 but putting this in
-# to keep the code consistent should we ever want to join the DF 
+# we adjust to 2022 base year so the adjustment here is 1 but putting this in
+# to keep the code consistent for a later join DF
 data <-data %>%
     mutate(ADJ_HHINCOME = HHINCOME)
 
@@ -390,7 +410,8 @@ data <- data %>%
     labels = incrementing_labels, # how to label each bracket
     right = FALSE, # left close eg Inc1 is [0,15000) Inc2 [15000,30000)
     ordered_result = TRUE, # this is an ordered factor so Inc1< Inc2<...<Inc14
-                 ))
+                 ),
+    IncCat=Inc) # preserves the bucket variable after the next step
 
  
 #creates the binary variables 
@@ -582,7 +603,8 @@ data <- data %>%
     labels = incrementing_labels, # how to label each bracket
     right = FALSE, # left close eg Inc1 is [0,15000) Inc2 [15000,30000)
     ordered_result = TRUE, # this is an ordered factor so Inc1< Inc2<...<Inc14
-                 ))
+                 ),
+    IncCat=Inc) # preserves the bucket variable after the next step
 
  
 #creates the binary variables 
@@ -613,6 +635,59 @@ rm(data, data_HH, ddi, ipums_data, years)
 # ipums_data <- read_ipums_micro(ddi)
 
 ## serial are not consistent across year but might be across samples
+
+```
+
+## create year mean variable for input into predictions
+```{r}
+
+## Multiply all variables by HHWT in the sample.  Even for head of HH, we care
+# about how many such similarly headed households there are, not how many such
+# people (PERWT) there are
+
+
+years <- c(2019, 2022, 2024)
+
+ACS_Means <- lapply(years, function(yr) {
+  get(paste0("ACS_", yr, "_1Y")) %>%
+    summarise(
+      YEAR = first(YEAR),
+      ADJ_HHINCOME = weighted.mean(ADJ_HHINCOME, HHWT),
+      HHINCOME = weighted.mean(HHINCOME, HHWT),
+      SeniorPresent = weighted.mean(SeniorPresent, HHWT),
+      ChildPresent = weighted.mean(ChildPresent, HHWT),
+      AGE = weighted.mean(AGE, HHWT),
+      SEX = weighted.mean(SEX, HHWT),
+      LF = weighted.mean(LF, HHWT)
+    )
+})
+
+
+ACS_1year_means <-bind_rows(ACS_Means)
+
+
+```
+
+
+## Create observed bin counts from the ACS data by year
+
+```{r}
+
+
+years <- c(2019, 2022, 2024)
+
+ACS_IncCat_Counts <- bind_rows(
+  lapply(years, function(yr) {
+    get(paste0("ACS_", yr, "_1Y")) %>%
+      group_by(IncCat) %>%
+      summarise(
+        HH_Count = sum(HHWT, na.rm = TRUE),
+        .groups = "drop"
+      ) %>%
+      mutate(YEAR = yr)
+  })
+) %>%
+  relocate(YEAR)
 
 ```
 
@@ -713,7 +788,66 @@ stopifnot(
 cat("Export verification passed.\n")
 cat("Rows:", nrow(exported_data), "\n")
 cat("Columns:", ncol(exported_data), "\n")
- 
+
+
+## export the means
+
+output_means <- file.path(
+  cfg$paths$output_dir,
+  cfg$IPUMS$outout_file_ACS_1year_means
+)
+
+# Write CSV
+write.csv(
+  ACS_1year_means,
+  output_means,
+  row.names = FALSE
+)
+
+cat("Dataset saved to:", output_means, "\n")
+
+# Read the CSV back for verification
+exported_data <- read.csv(output_means)
+
+# Verify dimensions and column names
+stopifnot(
+  nrow(exported_data) == nrow(ACS_1year_means),
+  identical(names(exported_data), names(ACS_1year_means))
+)
+
+cat("Export verification passed.\n")
+cat("Rows:", nrow(exported_data), "\n")
+cat("Columns:", ncol(exported_data), "\n")
+
+## export the distributions
+
+output_dis <- file.path(
+  cfg$paths$output_dir,
+  cfg$IPUMS$output_file_ACS_1year_IncDis
+)
+
+# Write CSV
+write.csv(
+  ACS_IncCat_Counts,
+  output_dis,
+  row.names = FALSE
+)
+
+cat("Dataset saved to:", output_dis, "\n")
+
+# Read the CSV back for verification
+exported_data <- read.csv(output_dis)
+
+# Verify dimensions and column names
+stopifnot(
+  nrow(exported_data) == nrow(ACS_IncCat_Counts),
+  identical(names(exported_data), names(ACS_IncCat_Counts))
+)
+
+cat("Export verification passed.\n")
+cat("Rows:", nrow(exported_data), "\n")
+cat("Columns:", ncol(exported_data), "\n")
+
 
 #clean up the memory
 rm(list = ls())
