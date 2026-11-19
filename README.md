@@ -116,15 +116,14 @@ Expected output: `bespoke_model.xlsx` May also produce a an intermediate file sa
 
 Completed
 - [X] create complex survey design.
-- [X] Create loopable model for regressions over income catagories.
-
+- [X] Create loopable model for regressions over income catagories.-
+- [X] Load IPUMS csv data.
+- [X] For each income category, rerun the model with only the statistically signficiant varriables.
+- [X] Compare the bespoke and full form R values for goodness of fit, and run an F test on if full form model coefficents are jointly signficant.
+- [X] After selecting final models, input predicted values for independent variables and output predicted percentages.
+- [X] Row sum the probabilities to ensure they are close to 1.
+      
 Remaining:
-- [ ] Load IPUMS csv data.
-- [ ] Filter to San Diego County, and year = 2024.
-- [ ] For each income category, rerun the model with only the statistically signficiant varriables.
-- [ ] Compare the bespoke and full form R values for goodness of fit, and run an F test on if full form model coefficents are jointly signficant.
-- [ ] After selecting final models, input predicted values for independent variables and output predicted percentages.
-- [ ] Row sum the probabilities to ensure they are close to 1. 
 - [ ] Export the predicted probabilities in an excel format.  
 - [ ] Document variable definitions, temporal coverage, and known limitations.
 
@@ -139,13 +138,12 @@ Planned notebook: `notebooks/04_ppo_logit.Rmd`
 Expected output: `ppo_model.xlsx` May also produce a an intermediate file saving the R models for future prediction 
 
 Completed:
+- [X] Load IPUMS csv data.
+- [X] create complex survey design. 
+- [X] Create a visual test with point estimates and coefficient bars to determine which variables to select as parellel or model specific.
 - [X] Create a modified Wald test that incorporates weights from the complex survey design
-- [X] Create a visual test with point estimates and coefficient bars to determine which variables to select as parellel or model specific
        
 Remaining:
-- [ ] Load IPUMS csv data.
-- [ ] Filter to San Diego County. and year = 2024.
-- [ ] create complex survey design. 
 - [ ] After selecting final models, input predicted values for independent variables and output predicted percentages.
 - [ ] Export the predicted probabilities in an excel format.  
 - [ ] Document variable definitions, temporal coverage, and known limitations.
