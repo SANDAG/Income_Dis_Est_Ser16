@@ -10,8 +10,9 @@ knitr::opts_chunk$set(echo = TRUE)
 
 library("dplyr") # data cleaning and handling
 library("modelsummary") # outputting results where needed
-library(srvyr) # used for logit regressions with complex survey designs
-library(svyVGAM) # used for PPO regressions with complex survey designs 
+library("srvyr") # used for logit regressions with complex survey designs
+library("svyVGAM") # used for PPO regressions with complex survey designs 
+library("stringr") #used to resort the mlogit output 
  
 # Load project configuration
 source(here::here("R", "load_config.R"))
@@ -39,10 +40,10 @@ input_dis <- file.path(
 )
 
 
-## independent variables to be used in the regessions below.  This means you only
+## independent variables to be used in the regressions below.  This means you only
 ## need to update them here.
 
-x_vector <- ("HHSize + ChildPresent + SeniorPresent + AGE + LF + SEX + HHSize*ChildPresent ") 
+x_vector <- ("HHSize + ChildPresent + SeniorPresent + AGE + LF + SEX") 
 
 stopifnot(file.exists(input_2019))
 stopifnot(file.exists(input_2024))

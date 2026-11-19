@@ -48,9 +48,9 @@ input_dis <- file.path(
 ## independent variables to be used in the regressions below.  This means you only
 ## need to update them here.
 
-x_vector <- ("HHSize + ChildPresent + SeniorPresent + AGE + LF + SEX + ChildPresent*HHSize+AGE*LF") 
+x_vector <- ("HHSize + ChildPresent + SeniorPresent + AGE + LF + SEX") 
 
-#stopifnot(file.exists(input_2019))
+stopifnot(file.exists(input_2019))
 stopifnot(file.exists(input_2024))
 stopifnot(file.exists(input_means))
 stopifnot(file.exists(input_dis))
@@ -294,6 +294,243 @@ print(results, row.names = FALSE)
 ```
 
 
+## load the 2019 data and create the formula 
+ 
+```{r}
+
+ACS_1year_2019 <- read.csv(file.path(input_2019)) ## loads 2024 data
+
+#restoring ordered factor nature to the ordered factor varriable
+ACS_1year_2019$IncCat <- ordered(ACS_1year_2019$IncCat, levels = paste0("Inc", 1:14))
+
+ACS_1year_means <-read.csv(file.path(input_means))
+
+ACS_1year_dis <-read.csv(file.path(input_dis))
+
+Weighted_IPUMS <-as_survey(ACS_1year_2019, id=CLUSTER,
+                           weights=HHWT,
+                           strata=STRATA,
+                           nest=TRUE)
+
+## Goal here is to test the Partial Proportional Odds Model (PPO).  This model allows you 
+## to take advantage of the fact that you have ordinal data for variables which
+## meet the parallel lines assumption, and let them vary randomly for the variables
+## which do not meet that assumption. In order to test if we should use a PPO
+## we would normally use a Brant Test.  That test effectively looks at if the coefficients 
+## (B) are close enough in the separate logistic models to have parallel slopes
+## after accounting for difference from sampling. However we have a complex survey
+## design featuring stratification which does not line up with the random sampling
+## assumption in the Brant test. This modification of the Brant test which uses
+## R's survey package to introduce the sampling weights.  The blog post detailing it
+## can be found here https://notstatschat.rbind.io/2023/02/09/checking-proportionality-of-odds/
+
+# set our formula, this saves us from retyping it for all the individual logistic
+# regressions and lets us test alternative specifications
+
+
+formula <- as.formula(
+  paste("IncCat ~", x_vector)
+)
+
+ 
+ 
+
+``` 
+
+## Test which variables do or do not meet parallel lines assumption 
+```{r}
+#setting up the ordered logit model with weights
+m1 <-svyolr(formula, design = Weighted_IPUMS)
+
+K<-length(m1$lev) # acquire levels of the ordered category IncCat
+P<-length(m1$coef) # acquire # of coefficients which is 6 but we can change the model
+
+#get influence function which allows covariance matrix to be computed
+#this fist block defines the influence function
+get_infl <-function(k,formula,design){
+  y<-formula[[2]]
+  formula[[2]]<-bquote(I(as.numeric(.(y))>.(k)))
+  mk<-svyglm(formula, design, family= quasibinomial, influence=TRUE) #quasibinomial is the svglm package's logistic regression
+  list(coef(mk), attr(mk, "influence"))
+  }
+
+#this second block calls it and get the covariance matrix
+# lapply applied the function over each of our levels, running a binomial
+# regression for each level of the function, except the last which is the omitted category
+# combined_v is the variance covariance matrix based on the complex survey design totals
+fits<-lapply(1:(K-1), function(k) get_infl(k, formula, Weighted_IPUMS))
+infs<-do.call(cbind,lapply(fits,"[[",2))
+combined_V<- vcov(svytotal(infs/weights(Weighted_IPUMS), Weighted_IPUMS))
+
+# now we extract the coefficients we care about to make the comparison
+conditional_V<- lapply(1:P, 
+                       function(p) 1/diag(solve(combined_V[c(p+1+(0:(K-2))*(P+1)), c(p+1+(0:(K-2))*(P+1))])))
+coefs<-lapply(fits,"[[",1)
+
+
+## An initial visual test, if the point estimates on the coefficients are all within
+## one anther's error bars we are probably ok to use the ordinal model for that
+## coefficient, otherwise that var fails the parallel lines assumption
+## we can then make a modified formula and run it through the Brant test located
+## in the next code block
+
+res <- data.frame(
+  variable = rep(names(coefs[[1]])[-1], each = K - 1),
+  cutpoint = rep(names(m1$zeta), P),
+  estimate = as.vector(do.call(rbind, coefs)[,-1]),
+  se = sqrt(do.call(c, conditional_V))
+)
+
+res$cutpoint <- factor(
+  res$cutpoint,
+  levels = rev(names(m1$zeta)),
+  ordered = TRUE
+)
+
+res$lower <- res$estimate - 1.96 * res$se
+res$upper <- res$estimate + 1.96 * res$se
+
+p<-ggplot(res,aes(y=cutpoint,col=cutpoint))+
+  geom_point(aes(x=estimate))+
+  geom_linerange(aes(xmin=lower,xmax=upper))+
+  facet_wrap(~variable,scales="free")+
+  theme(legend.position="none")+
+  geom_vline(aes(xintercept=z),linetype="dotted",
+             data.frame(z=m1$coef,variable=names(coefs[[1]])[-1]))
+print(p)
+
+```
+
+
+## modified Brant test
+```{r}
+## here is then the modified Brant test which looks at how far away the 
+## unconstrained betas are from one another specifically testing if
+## B_{kp}=T_k*B_p 
+## T_k is a term for individual levels around the cut points.  
+## basically we want to know if the betas from running the Ordered Logit model
+## look like the Betas we get when we run the individual logit models, just
+## doing in that in a more statistically rigorous way which accounts for 
+## variance in the samples and complex survey sampling.
+
+
+# Rerun the model in case the previous block was not run
+m1 <-svyolr(formula, design = Weighted_IPUMS)
+
+#terms needed for the Brant Test
+K <- length(m1$lev)  # Acquire levels of the ordered category IncCat
+P <- length(m1$coef) # Acquire number of coefficients 
+
+# Get influence function which allows covariance matrix to be computed
+# This fist block defines the influence function
+get_infl <- function(k, formula, design) {
+  y <- formula[[2]]
+  formula[[2]] <- bquote(I(as.numeric(.(y)) > .(k)))
+  mk <- svyglm(formula, design, family = quasibinomial, influence = TRUE)
+  list(coef(mk), attr(mk, "influence"))
+}
+
+# This second block calls the influence function and get the covariance matrix
+# lapply applied the function over each of our K-1 cut-points, running a binomial
+# regression for each level of the function, except the last which is the omitted category
+ 
+fits <- lapply(1:(K - 1), function(k) get_infl(k, formula, Weighted_IPUMS))
+infs <- do.call(cbind, lapply(fits, "[[", 2))
+combined_V <- vcov(svytotal(infs / weights(Weighted_IPUMS), Weighted_IPUMS))
+
+coefs <- lapply(fits, "[[", 1)
+
+# Extract slope coefficients (excluding intercepts) and their joint covariance matrix
+B <- do.call(c, lapply(coefs, "[", -1))
+intercept_idx <- 1 + (0:(K - 2)) * (P + 1)
+VarB <- combined_V[-intercept_idx, -intercept_idx]
+
+# Tests whether slopes scale proportionally across cut-points: B_{kp} = T_k * B_p
+# creates a matrix so our output exists for all variables not just the join model
+
+D_dir <- diag(P)
+for (k in 2:(K - 1)) {
+  D_dir <- rbind(D_dir, diag(P))
+}
+D_dir <- cbind(D_dir, matrix(0, nrow = P * (K - 1), ncol = K - 2))
+
+for (k in 1:(K - 2)) {
+  D_dir[(P * k) + (1:P), P + k] <- coefs[[k + 1]][-1]
+}
+
+VarBinv <- solve(VarB)
+deltahat <- solve(t(D_dir) %*% VarBinv %*% D_dir, t(D_dir) %*% VarBinv %*% B)
+VarDelta <- solve(t(D_dir) %*% VarBinv %*% D_dir)
+
+i <- P + (1:(K - 2))
+brantTest_dir <- as.numeric(deltahat[i] %*% solve(VarDelta[i, i]) %*% deltahat[i])
+p_dir <- pchisq(brantTest_dir, df = (K - 2), lower.tail = FALSE)
+
+# Standard Omnibus & Per-Coefficient Brant Tests (Brant 1990, Section 2)
+# Tests strict equality of slopes across cut-points: B_{1p} = B_{2p} = ... = B_{(K-1)p}
+# E.G. are all the individual coefficients from the logit model the same for each category? 
+
+D_std <- matrix(0, nrow = P * (K - 2), ncol = P * (K - 1))
+
+for (k in 1:(K - 2)) {
+  row_idx <- ((k - 1) * P + 1):(k * P)
+  col_idx_1 <- 1:P
+  col_idx_k <- (k * P + 1):((k + 1) * P)
+  
+  D_std[row_idx, col_idx_1] <- diag(P)
+  D_std[row_idx, col_idx_k] <- -diag(P)
+}
+
+# Standard Omnibus Test, tests all coefficents jointly
+diff_B <- D_std %*% B
+Var_diff <- D_std %*% VarB %*% t(D_std)
+X2_omnibus <- as.numeric(t(diff_B) %*% solve(Var_diff) %*% diff_B)
+df_omnibus <- P * (K - 2)
+p_omnibus <- pchisq(X2_omnibus, df = df_omnibus, lower.tail = FALSE)
+
+# Build results table starting with Directional Omnibus and Standard Omnibus
+coef_names <- names(m1$coef)
+results <- data.frame(
+  Test = c("Omnibus (Directional)", "Omnibus (Standard)", coef_names),
+  Chi2 = NA,
+  df = NA,
+  p_value = NA
+)
+
+results[1, 2:4] <- c(brantTest_dir, K - 2, p_dir)
+results[2, 2:4] <- c(X2_omnibus, df_omnibus, p_omnibus)
+
+# Loop through each individual coefficient test
+for (p in 1:P) {
+  p_rows <- seq(from = p, to = P * (K - 2), by = P)
+  D_p <- D_std[p_rows, , drop = FALSE]
+  
+  diff_p <- D_p %*% B
+  Var_p <- D_p %*% VarB %*% t(D_p)
+  
+  X2_p <- as.numeric(t(diff_p) %*% solve(Var_p) %*% diff_p)
+  df_p <- K - 2
+  p_val <- pchisq(X2_p, df = df_p, lower.tail = FALSE)
+  
+  results[p + 2, 2:4] <- c(X2_p, df_p, p_val)
+}
+
+# Format and print output
+# Null is that the parallel lines assumption holds 
+# Note that Brant actually warns against using the Omnibus test, its included for
+# completeness
+
+results$Chi2 <- round(results$Chi2, 3)
+results$p_value <- round(results$p_value, 4)
+print(results, row.names = FALSE)
+
+# clear these away to rerun the Brant test later.  We could rename them below if
+# we want to have both Brant tests for some reason 
+ rm(K, P, fits, infs, combined_V, conditional_V, coefs, D, B, VarB, VarBinv, deltahat, VarDelta, brantTest)
+
+
+```
+
 
 Note that the `echo = FALSE` parameter was added to the code chunk to prevent printing of the R code that generated the plot.
 ```{r}
@@ -304,13 +541,121 @@ Note that the `echo = FALSE` parameter was added to the code chunk to prevent pr
 ## parallel variables.  We can flip this to parallel = FALSE and then specify 
 ## the non-parallel variables instead if there are many of them
 
-ppo_model <- svy_vglm(
+Weighted_IPUMS_19 <-as_survey(ACS_1year_2019, id=CLUSTER,
+                           weights=HHWT,
+                           strata=STRATA,
+                           nest=TRUE)
+
+Weighted_IPUMS_24 <-as_survey(ACS_1year_2024, id=CLUSTER,
+                           weights=HHWT,
+                           strata=STRATA,
+                           nest=TRUE)
+
+ppo_model_19 <- svy_vglm(
   formula = formula,
-  family = cumulative(link = "logitlink", parallel = TRUE ~ AGE + SEX),
-  design = Weighted_IPUMS
+  family = cumulative(link = "logitlink", parallel = TRUE ~  SEX),
+  design = Weighted_IPUMS_19
+)
+
+ppo_model_24 <- svy_vglm(
+  formula = formula,
+  family = cumulative(link = "logitlink", parallel = TRUE ~  SEX),
+  design = Weighted_IPUMS_24
 )
 
 ## to do, create an un-stacked model summary table for easy viewing.  
 ## log-odds presented here not easy to interpret anyways so this is a low priority 
 
 ```
+## Input the observed ACS sample mean and predict based on the PPO model
+
+```{r}
+
+ppo_probs_19 <- predict(
+  ppo_model_19,
+  newdata = ACS_1year_means,
+  type = "response"
+)
+
+
+pred_ppo_2019 <- as.data.frame(ppo_probs_19) %>%
+  mutate(YEAR = ACS_1year_means$YEAR) %>%
+  relocate(YEAR)
+
+ 
+ppo_probs_24 <- predict(
+  ppo_model_24,
+  newdata = ACS_1year_means,
+  type = "response"
+)
+
+pred_ppo_2024 <- as.data.frame(ppo_probs_24) %>%
+  mutate(YEAR = ACS_1year_means$YEAR) %>%
+  relocate(YEAR)
+
+
+```
+
+## Export the predictions to csv
+
+```{r}
+
+stopifnot(!is.null(cfg$paths$output_dir))
+
+## export individual logit predictions 2024 data
+
+# Create output directory if it does not exist
+dir.create(
+  cfg$paths$output_dir,
+  recursive = TRUE,
+  showWarnings = FALSE
+)
+
+years <- c("2019", "2024")
+
+## make a list of output matrices for bespoke logit models
+pred_matrices <- list(
+  `2019` = pred_ppo_2019,
+  `2024` = pred_ppo_2024
+)
+
+
+## file list for export
+ppo_files <- list(
+  `2019` = cfg$Predict$output_file_ppo_2019_1year,
+  `2024` = cfg$Predict$output_file_ppo_2024_1year
+)
+
+# uses pred_matricies but any would work
+for (yr in years) {
+  
+  print(yr)
+  
+  print(cfg$paths$output_dir)
+  
+  
+  # create filepath for bespoke models
+  output_ppo <- file.path(
+    cfg$paths$output_dir,
+    ppo_files[[yr]]
+  )
+
+ 
+ # write csv for bespoke models
+  write.csv(
+    pred_matrices[[yr]],
+    output_ppo,
+    row.names = FALSE
+  )
+
+
+ 
+}
+
+  
+ #clean up the memory
+rm(list = ls())
+
+
+```
+

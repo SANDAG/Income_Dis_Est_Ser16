@@ -1,0 +1,138 @@
+---
+title: "06_model_selection"
+output: html_document
+date: "2026-11-19"
+---
+
+
+
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+
+# Load project configuration
+source(here::here("R", "load_config.R"))
+cfg <- load_config()
+ 
+## file path for means and distributions
+
+years <- c("2019", "2024")
+
+# File lists from config
+logit_files <- list(
+  `2019` = cfg$Predict$output_file_logit_2019_1year,
+  `2024` = cfg$Predict$output_file_logit_2024_1year
+)
+
+mlogit_files <- list(
+  `2019` = cfg$Predict$output_file_Mult_2019_1year,
+  `2024` = cfg$Predict$output_file_Mult_2024_1year
+)
+
+bespoke_files <- list(
+  `2019` = cfg$Predict$output_file_bespoke_2019_1year,
+  `2024` = cfg$Predict$output_file_bespoke_2024_1year
+)
+
+ppo_files <- list(
+  `2019` = cfg$Predict$output_file_ppo_2019_1year,
+  `2024` = cfg$Predict$output_file_ppo_2024_1year
+)
+
+# Construct input file paths
+for (yr in years) {
+
+  assign(
+    paste0("predict_logit_", yr),
+    file.path(
+      cfg$paths$output_dir,
+      logit_files[[yr]]
+    )
+  )
+
+  assign(
+    paste0("predict_mlogit_", yr),
+    file.path(
+      cfg$paths$output_dir,
+      mlogit_files[[yr]]
+    )
+  )
+
+  assign(
+    paste0("predict_bespoke_", yr),
+    file.path(
+      cfg$paths$output_dir,
+      bespoke_files[[yr]]
+    )
+  )
+
+  assign(
+    paste0("predict_ppo_", yr),
+    file.path(
+      cfg$paths$output_dir,
+      ppo_files[[yr]]
+    )
+  )
+}
+
+ 
+
+```
+
+
+
+## Load the predictions and means data
+
+
+```{r}
+
+
+for (yr in years) {
+
+  assign(
+    paste0("predict_logit_", yr),
+    read.csv(
+      get(paste0("predict_logit_", yr))
+    )
+  )
+  
+  assign(
+    paste0("predict_mlogit_", yr),
+    read.csv(
+      get(paste0("predict_mlogit_", yr))
+    )
+  )
+  
+  assign(
+    paste0("predict_bespoke_", yr),
+    read.csv(
+      get(paste0("predict_bespoke_", yr))
+    )
+  )  
+
+  assign(
+    paste0("predict_ppo_", yr),
+    read.csv(
+      get(paste0("predict_ppo_", yr))
+    )
+  )    
+}
+
+ 
+
+#restoring ordered factor nature to the ordered factor varriable
+
+
+ACS_1year_means <-read.csv(file.path(input_means))
+
+ACS_1year_dis <-read.csv(file.path(input_dis))
+
+
+```
+
+
+## Calculate the number of HH in each category 
+```{r}
+
+```
+
