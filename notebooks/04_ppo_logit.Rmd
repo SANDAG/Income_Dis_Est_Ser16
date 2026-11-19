@@ -1,0 +1,197 @@
+---
+title: "04_ppo_logit"
+output: html_document
+date: "2026-11-19"
+---
+
+
+```{r setup}
+knitr::opts_chunk$set(echo = TRUE)
+
+
+library("dplyr") # data cleaning and handling
+library("modelsummary") # outputting results where needed
+library(tidyr) 
+library(broom)
+library(purrr)
+library(srvyr) # used for logit regressions with complex survey designs
+library(svyVGAM) # used for PPO regressions with complex survey designs 
+library(forcats)
+library(ggplot2)
+
+# Load project configuration
+source(here::here("R", "load_config.R"))
+cfg <- load_config()
+
+# Construct input file path
+input_2024 <- file.path(
+  cfg$paths$output_dir,
+  cfg$IPUMS$output_file_2024_1year
+)
+
+input_2019 <- file.path(
+  cfg$paths$output_dir,
+  cfg$IPUMS$output_file_2019_1year
+)
+
+input_means <- file.path(
+  cfg$paths$output_dir,
+  cfg$IPUMS$outout_file_ACS_1year_means
+)
+
+input_dis <- file.path(
+  cfg$paths$output_dir,
+  cfg$IPUMS$output_file_ACS_1year_IncDis
+)
+
+
+## independent variables to be used in the regressions below.  This means you only
+## need to update them here.
+
+x_vector <- ("HHSize + ChildPresent + SeniorPresent + AGE + LF + SEX + ChildPresent*HHSize+AGE*LF") 
+
+stopifnot(file.exists(input_2019))
+stopifnot(file.exists(input_2024))
+stopifnot(file.exists(input_means))
+stopifnot(file.exists(input_dis))
+
+```
+
+## load the 2024 data and test which variables do or do not meet parallel lines assumption 
+ 
+```{r}
+
+ACS_1year_2024 <- read.csv(file.path(input_2024)) ## loads 2024 data
+
+#restoring ordered factor nature to the ordered factor varriable
+ACS_1year_2024$IncCat <- ordered(ACS_1year_2024$IncCat, levels = paste0("Inc", 1:14))
+
+ACS_1year_means <-read.csv(file.path(input_means))
+
+ACS_1year_dis <-read.csv(file.path(input_dis))
+
+Weighted_IPUMS <-as_survey(ACS_1year_2024, id=CLUSTER,
+                           weights=HHWT,
+                           strata=STRATA,
+                           nest=TRUE)
+
+## Goal here is to test the Partial Proportional Odds Model (PPO).  This model allows you 
+## to take advantage of the fact that you have ordinal data for variables which
+## meet the parallel lines assumption, and let them vary randomly for the variables
+## which do not meet that assumption. In order to test if we should use a PPO
+## we would normally use a Brant Test.  That test effectively looks at if the coefficients 
+## (B) are close enough in the separate logistic models to have parallel slopes
+## after accounting for difference from sampling. However we have a complex survey
+## design featuring stratification which does not line up with the random sampling
+## assumption in the Brant test. This modification of the Brant test which uses
+## R's survey package to introduce the sampling weights.  The blog post detailing it
+## can be found here https://notstatschat.rbind.io/2023/02/09/checking-proportionality-of-odds/
+
+# set our formula, this saves us from retyping it for all the individual logistic
+# regressions and lets us test alternative specifications
+
+
+formula <- as.formula(
+  paste("IncCat ~", x_vector)
+)
+
+ 
+#setting up the ordered logit model with weights
+m1 <-svyolr(formula, design = Weighted_IPUMS)
+
+K<-length(m1$lev) # acquire levels of the ordered category Income_Cat
+P<-length(m1$coef) # acquire # of coefficients which is 6 but we can change the model
+
+#get influence function which allows covariance matrix to be computed
+#this fist block defines the influence function
+get_infl <-function(k,formula,design){
+  y<-formula[[2]]
+  formula[[2]]<-bquote(I(as.numeric(.(y))>.(k)))
+  mk<-svyglm(formula, design, family= quasibinomial, influence=TRUE) #quasibinomial is the svglm package's logistic regression
+  list(coef(mk), attr(mk, "influence"))
+  }
+
+#this second block calls it and get the covariance matrix
+# lapply applied the function over each of our levels, running a binomial
+# regression for each level of the function, except the last which is the omitted category
+fits<-lapply(1:(K-1), function(k) get_infl(k, formula, Weighted_IPUMS))
+infs<-do.call(cbind,lapply(fits,"[[",2))
+combined_V<- vcov(svytotal(infs/weights(Weighted_IPUMS), Weighted_IPUMS))
+
+# now we extract the coefficients we care about to make the comparison
+conditional_V<- lapply(1:P, 
+                       function(p) 1/diag(solve(combined_V[c(p+1+(0:(K-2))*(P+1)), c(p+1+(0:(K-2))*(P+1))])))
+coefs<-lapply(fits,"[[",1)
+
+
+## An initial visual test, if the point estimates on the coefficients are all within
+## one anther's error bars we are probably ok to use the ordinal model for that
+## coefficient, otherwise that var fails the parallel lines assumption
+## we can then make a modified formula and run it through the Brant test located
+## in the next code block
+
+res <- data.frame(
+  variable = rep(names(coefs[[1]])[-1], each = K - 1),
+  cutpoint = rep(names(m1$zeta), P),
+  estimate = as.vector(do.call(rbind, coefs)[,-1]),
+  se = sqrt(do.call(c, conditional_V))
+)
+
+res$cutpoint <- factor(
+  res$cutpoint,
+  levels = rev(names(m1$zeta)),
+  ordered = TRUE
+)
+
+res$lower <- res$estimate - 1.96 * res$se
+res$upper <- res$estimate + 1.96 * res$se
+
+p<-ggplot(res,aes(y=cutpoint,col=cutpoint))+
+  geom_point(aes(x=estimate))+
+  geom_linerange(aes(xmin=lower,xmax=upper))+
+  facet_wrap(~variable,scales="free")+
+  theme(legend.position="none")+
+  geom_vline(aes(xintercept=z),linetype="dotted",
+             data.frame(z=m1$coef,variable=names(coefs[[1]])[-1]))
+print(p)
+
+
+```
+
+## modified brant test
+```{r}
+
+## here is then the modified Brant test which looks at how far away the unconstrained betas are from one another
+## specifically testing if B_{kp}=T_kB_p where T_k is  
+
+D<-diag(P)
+for(k in 2:(K-1)){
+  D<-rbind(D,diag(P))
+}
+D<-cbind(D,matrix(0,nrow=(P)*(K-1),ncol=(K-2)))
+for (k in 1:(K-2)){
+  D[(P-1)*k+(1:(P)),P+k]<-coefs[[k+1]][-1]
+}       
+
+B<-do.call(c,lapply(coefs, "[",-1))
+VarB<-(combined_V[-(1+(0:(K-2))*(P+1)),-(1+(0:(K-2))*(P+1))])
+VarBinv<-solve(VarB)
+deltahat<- solve(t(D)%*%VarBinv%*%D, t(D)%*%VarBinv%*%B)
+VarDelta<-solve(t(D)%*%VarBinv%*%D)
+
+i<-P+(1:(K-2))
+brantTest<-deltahat[i]%*%solve(VarDelta[i,i])%*%deltahat[i]
+brantTest  #this is the test statistic 
+
+#Brant test is a chi squared test with K-2 degrees of freedom so we run it though
+# the pchisq command to get a P value
+# Null is that parallel lines assumption holds, 
+pchisq(brantTest,df=(K-2),lower.tail=FALSE)
+
+
+
+
+
+```
+
+Note that the `echo = FALSE` parameter was added to the code chunk to prevent printing of the R code that generated the plot.
