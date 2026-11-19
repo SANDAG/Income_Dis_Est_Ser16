@@ -1,0 +1,207 @@
+---
+title: "Bespoke_model"
+output: html_document
+date: "2026-11-18"
+---
+
+
+```{r setup}
+knitr::opts_chunk$set(echo = TRUE)
+
+
+library("dplyr") # data cleaning and handling
+library("modelsummary") # outputting results where needed
+library(tidyr) 
+library(broom)
+library(purrr)
+library(srvyr) # used for logit regressions with complex survey designs
+library(svyVGAM) # used for PPO regressions with complex survey designs 
+ 
+# Load project configuration
+source(here::here("R", "load_config.R"))
+cfg <- load_config()
+
+# Construct input file path
+input_2024 <- file.path(
+  cfg$paths$output_dir,
+  cfg$IPUMS$output_file_2024_1year
+)
+
+input_2019 <- file.path(
+  cfg$paths$output_dir,
+  cfg$IPUMS$output_file_2019_1year
+)
+
+input_means <- file.path(
+  cfg$paths$output_dir,
+  cfg$IPUMS$outout_file_ACS_1year_means
+)
+
+input_dis <- file.path(
+  cfg$paths$output_dir,
+  cfg$IPUMS$output_file_ACS_1year_IncDis
+)
+
+
+## independent variables to be used in the regressions below.  This means you only
+## need to update them here.
+
+x_vector <- ("HHSize + ChildPresent + SeniorPresent + AGE + LF + SEX + ChildPresent*HHSize+AGE*LF") 
+
+stopifnot(file.exists(input_2019))
+stopifnot(file.exists(input_2024))
+stopifnot(file.exists(input_means))
+stopifnot(file.exists(input_dis))
+
+```
+
+## load the 2024 data and run the model, using model summary to report the statistically significant coefficents. 
+ 
+```{r}
+
+ACS_1year_2024 <- read.csv(file.path(input_2024)) ## loads 2024 data
+
+ACS_1year_means <-read.csv(file.path(input_means))
+
+ACS_1year_dis <-read.csv(file.path(input_dis))
+
+Weighted_IPUMS <-as_survey(ACS_1year_2024, id=CLUSTER,
+                           weights=HHWT,
+                           strata=STRATA,
+                           nest=TRUE)
+
+## This is to loop over the different logit models in R and produce 1 result for each
+
+y_vector <-  names(ACS_1year_2024 %>% select(num_range("Inc", 1:14))) # vector of Inc to loop over
+
+
+## the for loop using lapply, takes in the vector of Inc variables, combines
+## the formula of x and y variables, then runs them through the svglm function
+## saves the results in the models object.  
+models <- lapply(y_vector, function(y) {
+  
+  logitformula <- reformulate(termlabels = x_vector, response = y)
+  
+  svyglm(logitformula, design = Weighted_IPUMS, family =  binomial (link = "logit"))
+})
+
+## adds the Inc# as the name of the lists stored in models, easier to call
+## e.g. if you want the results for Inc1 you can call models$Inc1 
+
+names(models) <- y_vector
+
+
+# Extract significant coefficients (p < 0.05) per model
+sig_coeffs_list <- map(models, ~ {
+  tidy(.x) %>%
+    filter(p.value < 0.05) %>%
+    filter(term != "(Intercept)") # Optional: remove intercept
+})
+
+# View the resulting list
+print(sig_coeffs_list)
+
+# Run new models using only the statistically significant varriables 
+refitted_models <- map2(models, sig_coeffs_list, ~ {
+  sig_terms <- .y$term
+  
+  # Handle cases where a model had 0 significant predictors (intercept-only)
+  new_formula <- if (length(sig_terms) > 0) {
+    reformulate(sig_terms, response = ".")
+  } else {
+    . ~ 1
+  }
+  
+  update(.x, formula = new_formula)
+})
+
+#View the resulting models
+
+#print(refitted_models)
+
+# Generate predicted probabilities
+pred_matrix <- sapply(refitted_models, function(mod) {
+  predict(mod,
+          newdata = ACS_1year_means,
+          type = "response")
+})
+
+pred_matrix_2024 <- as.data.frame(pred_matrix) %>%
+  mutate(YEAR = ACS_1year_means$YEAR) %>%
+  relocate(YEAR)
+# Sum probabilities across income categories for each observation
+rowSums(pred_matrix)
+
+
+get_metrics <- function(model_list, model_type) {
+  imap_dfr(model_list, ~ {
+    g <- glance(.x)
+    
+    tibble(
+      model_name = .y,
+      version = model_type,
+      RMSE = sqrt(mean(residuals(.x)^2)),
+      AIC = g$AIC,
+      BIC = g$BIC,
+      adj_r_squared = if ("adj.r.squared" %in% names(g)) g$adj.r.squared else NA_real_
+    )
+  })
+}
+
+comparison_df <- bind_rows(
+  get_metrics(models, "Original"),
+  get_metrics(refitted_models, "Refitted")
+) %>%
+  arrange(model_name, version)
+
+#print(comparison_df, n = Inf)
+
+comparison_wide <- comparison_df %>%
+  pivot_wider(
+    names_from = version,
+    values_from = c(RMSE, AIC, BIC, adj_r_squared)
+  ) %>%
+  mutate(
+    RMSE_diff = RMSE_Refitted - RMSE_Original,
+    AIC_diff = AIC_Refitted - AIC_Original,
+    BIC_diff = BIC_Refitted - BIC_Original,
+    adj_r2_diff = adj_r_squared_Refitted - adj_r_squared_Original
+  )
+
+#print(comparison_wide, width = Inf)
+
+
+# Clean up column names for display
+clean_comparison <- comparison_df %>%
+  rename(
+    Model = model_name,
+    Version = version,
+    `Adj. R²` = adj_r_squared
+  )
+
+ 
+
+```
+## Produce a table comparing the two models, showing all coefficients and relevant model comparison statistics 
+
+
+```{r model-comparison, echo=FALSE, message=FALSE, warning=FALSE}
+ 
+
+# Pair each original model next to its refitted model
+paired_models <- map2(models, refitted_models, ~ list(Original = .x, Refitted = .y)) %>%
+  flatten()
+
+names(paired_models) <- paste0(
+  rep(names(models), each = 2),
+  c(" (Original)", " (Refitted)")
+)
+
+# Render directly into the knitted R Markdown document
+modelsummary(
+  paired_models,
+  stars = TRUE,
+  gof_map = c("rmse", "aic", "bic", "adj.r.squared"),
+  title = "Original vs. Significant-Only Models"
+)
+```

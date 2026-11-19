@@ -70,8 +70,8 @@ Weighted_IPUMS <-as_survey(ACS_1year_2024, id=CLUSTER,
 
 y_vector <-  names(ACS_1year_2024 %>% select(num_range("Inc", 1:14))) # vector of Inc to loop over
 
-## the for loop using lapply, takes in the vector of Inc varriables, combines
-## the formula of x and y varriables, then runs them through the svglm function
+## the for loop using lapply, takes in the vector of Inc variables, combines
+## the formula of x and y variables, then runs them through the svglm function
 ## saves the results in the models object.  
 models <- lapply(y_vector, function(y) {
   
@@ -151,8 +151,8 @@ Weighted_IPUMS <-as_survey(ACS_1year_2019, id=CLUSTER,
 y_vector <-  names(ACS_1year_2019 %>% select(num_range("Inc", 1:14))) # vector of Inc to loop over
 
 
-## the for loop using lapply, takes in the vector of Inc varriables, combines
-## the formula of x and y varriables, then runs them through the svglm function
+## the for loop using lapply, takes in the vector of Inc variables, combines
+## the formula of x and y variables, then runs them through the svglm function
 ## saves the results in the models object.  
 models <- lapply(y_vector, function(y) {
   
@@ -288,12 +288,11 @@ for (yr in years) {
     output_mult,
     row.names = FALSE
   )
+}
+
   
  #clean up the memory
 rm(list = ls())
- 
-  
-}
 
 ```
 
