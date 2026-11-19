@@ -142,9 +142,10 @@ Completed:
 - [X] create complex survey design. 
 - [X] Create a visual test with point estimates and coefficient bars to determine which variables to select as parellel or model specific.
 - [X] Create a modified Wald test that incorporates weights from the complex survey design
+- [X] After selecting final models, input predicted values for independent variables and output predicted percentages.
        
 Remaining:
-- [ ] After selecting final models, input predicted values for independent variables and output predicted percentages.
+
 - [ ] Export the predicted probabilities in an excel format.  
 - [ ] Document variable definitions, temporal coverage, and known limitations.
 
