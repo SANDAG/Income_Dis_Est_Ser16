@@ -50,14 +50,14 @@ input_dis <- file.path(
 
 x_vector <- ("HHSize + ChildPresent + SeniorPresent + AGE + LF + SEX + ChildPresent*HHSize+AGE*LF") 
 
-stopifnot(file.exists(input_2019))
+#stopifnot(file.exists(input_2019))
 stopifnot(file.exists(input_2024))
 stopifnot(file.exists(input_means))
 stopifnot(file.exists(input_dis))
 
 ```
 
-## load the 2024 data and test which variables do or do not meet parallel lines assumption 
+## load the 2024 data and create the formula 
  
 ```{r}
 
@@ -96,10 +96,15 @@ formula <- as.formula(
 )
 
  
+ 
+
+``` 
+## Test which variables do or do not meet parallel lines assumption 
+```{r}
 #setting up the ordered logit model with weights
 m1 <-svyolr(formula, design = Weighted_IPUMS)
 
-K<-length(m1$lev) # acquire levels of the ordered category Income_Cat
+K<-length(m1$lev) # acquire levels of the ordered category IncCat
 P<-length(m1$coef) # acquire # of coefficients which is 6 but we can change the model
 
 #get influence function which allows covariance matrix to be computed
@@ -114,6 +119,7 @@ get_infl <-function(k,formula,design){
 #this second block calls it and get the covariance matrix
 # lapply applied the function over each of our levels, running a binomial
 # regression for each level of the function, except the last which is the omitted category
+# combined_v is the variance covariance matrix based on the complex survey design totals
 fits<-lapply(1:(K-1), function(k) get_infl(k, formula, Weighted_IPUMS))
 infs<-do.call(cbind,lapply(fits,"[[",2))
 combined_V<- vcov(svytotal(infs/weights(Weighted_IPUMS), Weighted_IPUMS))
@@ -155,43 +161,156 @@ p<-ggplot(res,aes(y=cutpoint,col=cutpoint))+
              data.frame(z=m1$coef,variable=names(coefs[[1]])[-1]))
 print(p)
 
-
 ```
 
-## modified brant test
+
+## modified Brant test
 ```{r}
+## here is then the modified Brant test which looks at how far away the 
+## unconstrained betas are from one another specifically testing if
+## B_{kp}=T_k*B_p 
+## T_k is a term for individual levels around the cut points.  
+## basically we want to know if the betas from running the Ordered Logit model
+## look like the Betas we get when we run the individual logit models, just
+## doing in that in a more statistically rigorous way which accounts for 
+## variance in the samples and complex survey sampling.
 
-## here is then the modified Brant test which looks at how far away the unconstrained betas are from one another
-## specifically testing if B_{kp}=T_kB_p where T_k is  
 
-D<-diag(P)
-for(k in 2:(K-1)){
-  D<-rbind(D,diag(P))
+# Rerun the model in case the previous block was not run
+m1 <-svyolr(formula, design = Weighted_IPUMS)
+
+#terms needed for the Brant Test
+K <- length(m1$lev)  # Acquire levels of the ordered category IncCat
+P <- length(m1$coef) # Acquire number of coefficients 
+
+# Get influence function which allows covariance matrix to be computed
+# This fist block defines the influence function
+get_infl <- function(k, formula, design) {
+  y <- formula[[2]]
+  formula[[2]] <- bquote(I(as.numeric(.(y)) > .(k)))
+  mk <- svyglm(formula, design, family = quasibinomial, influence = TRUE)
+  list(coef(mk), attr(mk, "influence"))
 }
-D<-cbind(D,matrix(0,nrow=(P)*(K-1),ncol=(K-2)))
-for (k in 1:(K-2)){
-  D[(P-1)*k+(1:(P)),P+k]<-coefs[[k+1]][-1]
-}       
 
-B<-do.call(c,lapply(coefs, "[",-1))
-VarB<-(combined_V[-(1+(0:(K-2))*(P+1)),-(1+(0:(K-2))*(P+1))])
-VarBinv<-solve(VarB)
-deltahat<- solve(t(D)%*%VarBinv%*%D, t(D)%*%VarBinv%*%B)
-VarDelta<-solve(t(D)%*%VarBinv%*%D)
+# This second block calls the influence function and get the covariance matrix
+# lapply applied the function over each of our K-1 cut-points, running a binomial
+# regression for each level of the function, except the last which is the omitted category
+ 
+fits <- lapply(1:(K - 1), function(k) get_infl(k, formula, Weighted_IPUMS))
+infs <- do.call(cbind, lapply(fits, "[[", 2))
+combined_V <- vcov(svytotal(infs / weights(Weighted_IPUMS), Weighted_IPUMS))
 
-i<-P+(1:(K-2))
-brantTest<-deltahat[i]%*%solve(VarDelta[i,i])%*%deltahat[i]
-brantTest  #this is the test statistic 
+coefs <- lapply(fits, "[[", 1)
 
-#Brant test is a chi squared test with K-2 degrees of freedom so we run it though
-# the pchisq command to get a P value
-# Null is that parallel lines assumption holds, 
-pchisq(brantTest,df=(K-2),lower.tail=FALSE)
+# Extract slope coefficients (excluding intercepts) and their joint covariance matrix
+B <- do.call(c, lapply(coefs, "[", -1))
+intercept_idx <- 1 + (0:(K - 2)) * (P + 1)
+VarB <- combined_V[-intercept_idx, -intercept_idx]
 
+# Tests whether slopes scale proportionally across cut-points: B_{kp} = T_k * B_p
+# creates a matrix so our output exists for all variables not just the join model
 
+D_dir <- diag(P)
+for (k in 2:(K - 1)) {
+  D_dir <- rbind(D_dir, diag(P))
+}
+D_dir <- cbind(D_dir, matrix(0, nrow = P * (K - 1), ncol = K - 2))
 
+for (k in 1:(K - 2)) {
+  D_dir[(P * k) + (1:P), P + k] <- coefs[[k + 1]][-1]
+}
+
+VarBinv <- solve(VarB)
+deltahat <- solve(t(D_dir) %*% VarBinv %*% D_dir, t(D_dir) %*% VarBinv %*% B)
+VarDelta <- solve(t(D_dir) %*% VarBinv %*% D_dir)
+
+i <- P + (1:(K - 2))
+brantTest_dir <- as.numeric(deltahat[i] %*% solve(VarDelta[i, i]) %*% deltahat[i])
+p_dir <- pchisq(brantTest_dir, df = (K - 2), lower.tail = FALSE)
+
+# Standard Omnibus & Per-Coefficient Brant Tests (Brant 1990, Section 2)
+# Tests strict equality of slopes across cut-points: B_{1p} = B_{2p} = ... = B_{(K-1)p}
+# E.G. are all the individual coefficients from the logit model the same for each category? 
+
+D_std <- matrix(0, nrow = P * (K - 2), ncol = P * (K - 1))
+
+for (k in 1:(K - 2)) {
+  row_idx <- ((k - 1) * P + 1):(k * P)
+  col_idx_1 <- 1:P
+  col_idx_k <- (k * P + 1):((k + 1) * P)
+  
+  D_std[row_idx, col_idx_1] <- diag(P)
+  D_std[row_idx, col_idx_k] <- -diag(P)
+}
+
+# Standard Omnibus Test, tests all coefficents jointly
+diff_B <- D_std %*% B
+Var_diff <- D_std %*% VarB %*% t(D_std)
+X2_omnibus <- as.numeric(t(diff_B) %*% solve(Var_diff) %*% diff_B)
+df_omnibus <- P * (K - 2)
+p_omnibus <- pchisq(X2_omnibus, df = df_omnibus, lower.tail = FALSE)
+
+# Build results table starting with Directional Omnibus and Standard Omnibus
+coef_names <- names(m1$coef)
+results <- data.frame(
+  Test = c("Omnibus (Directional)", "Omnibus (Standard)", coef_names),
+  Chi2 = NA,
+  df = NA,
+  p_value = NA
+)
+
+results[1, 2:4] <- c(brantTest_dir, K - 2, p_dir)
+results[2, 2:4] <- c(X2_omnibus, df_omnibus, p_omnibus)
+
+# Loop through each individual coefficient test
+for (p in 1:P) {
+  p_rows <- seq(from = p, to = P * (K - 2), by = P)
+  D_p <- D_std[p_rows, , drop = FALSE]
+  
+  diff_p <- D_p %*% B
+  Var_p <- D_p %*% VarB %*% t(D_p)
+  
+  X2_p <- as.numeric(t(diff_p) %*% solve(Var_p) %*% diff_p)
+  df_p <- K - 2
+  p_val <- pchisq(X2_p, df = df_p, lower.tail = FALSE)
+  
+  results[p + 2, 2:4] <- c(X2_p, df_p, p_val)
+}
+
+# Format and print output
+# Null is that the parallel lines assumption holds 
+# Note that Brant actually warns against using the Omnibus test, its included for
+# completeness
+
+results$Chi2 <- round(results$Chi2, 3)
+results$p_value <- round(results$p_value, 4)
+print(results, row.names = FALSE)
+
+# clear these away to rerun the Brant test later.  We could rename them below if
+# we want to have both Brant tests for some reason 
+ rm(K, P, fits, infs, combined_V, conditional_V, coefs, D, B, VarB, VarBinv, deltahat, VarDelta, brantTest)
 
 
 ```
+
+
 
 Note that the `echo = FALSE` parameter was added to the code chunk to prevent printing of the R code that generated the plot.
+```{r}
+## based on the visual test and confirming with the Brant test, we modify the 
+## model.  The formula remains the same but under family we add the option
+## parallel = TRUE ~ and follow with the variables that should be treated
+## as having a parallel trend with the syntax ~ X1+X2+...+Xn where X are our  
+## parallel variables.  We can flip this to parallel = FALSE and then specify 
+## the non-parallel variables instead if there are many of them
+
+ppo_model <- svy_vglm(
+  formula = formula,
+  family = cumulative(link = "logitlink", parallel = TRUE ~ AGE + SEX),
+  design = Weighted_IPUMS
+)
+
+## to do, create an un-stacked model summary table for easy viewing.  
+## log-odds presented here not easy to interpret anyways so this is a low priority 
+
+```
