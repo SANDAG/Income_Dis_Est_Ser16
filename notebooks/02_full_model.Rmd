@@ -43,7 +43,7 @@ input_dis <- file.path(
 ## independent variables to be used in the regressions below.  This means you only
 ## need to update them here.
 
-x_vector <- ("HHSize + ChildPresent + SeniorPresent + AGE + LF + SEX") 
+x_vector <- ("SEX") 
 
 stopifnot(file.exists(input_2019))
 stopifnot(file.exists(input_2024))

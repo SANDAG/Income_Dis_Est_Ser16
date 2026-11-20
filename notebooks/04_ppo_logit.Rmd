@@ -547,7 +547,7 @@ Note that the `echo = FALSE` parameter was added to the code chunk to prevent pr
 Weighted_IPUMS_19 <-as_survey(ACS_1year_2019, id=CLUSTER,
                            weights=HHWT,
                            strata=STRATA,
-                           nest=TRUE)
+                           nest=TRUE)mo
 
 Weighted_IPUMS_24 <-as_survey(ACS_1year_2024, id=CLUSTER,
                            weights=HHWT,

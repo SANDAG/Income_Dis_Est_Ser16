@@ -294,4 +294,133 @@ print("ppo chi-squared")
 print(results_ppo_2019)
 
 ```
+## Regression of predictions on observed 
+```{r}
+
+
+
+years  <- c(2019, 2024)
+models <- c("logit", "mlogit", "ppo", "bespoke")
+
+model_list <- list()
+
+## double loop across all models and all year
+for (yr in years) {
+  for (mdl in models) {
+    
+# creates a model x year list contain all input files all in wide format
+# also adds a model year and a model name column to each data frame
+    
+    model_list[[paste0(mdl, "_", yr)]] <-
+      get(paste0("predict_", mdl, "_HH", yr)) %>%
+      mutate(
+        model = mdl,
+        model_year = yr
+      )
+  }
+}
+
+# binds all the wide data frames together
+all_models <- bind_rows(model_list)
+
+#pivots them into a long data frame for regressions 
+all_models_long <-pivot_longer(
+  data = all_models,
+  cols = Inc1:Inc14,
+  names_to = "IncCat",
+  values_to = "predicted_HH"
+)
+
+# turns the observed distribution of HH data into a long data-frame
+obsered_long <- pivot_longer(
+  data = ACS_1year_dis,
+  cols = Inc1:Inc14,
+  names_to = "IncCat",
+  values_to = "observed_HH"
+)
+
+# joins the observed data to the predicted
+joined_models <- all_models_long %>% right_join(obsered_long, by=c("IncCat", "YEAR"))
+
+#restoring ordered factor nature to the ordered factor variable
+joined_models$IncCat <- ordered(joined_models$IncCat, levels = paste0("Inc", 1:14))
+
+formula2 = as.formula(observed_HH ~ 0 + predicted_HH)
+
+regression_list <- c(
+
+  list(
+    all_data = lm(formula2,
+                  data = joined_models)
+  ),
+     
+
+  joined_models %>%
+    split(.$model) %>%
+    lapply(\(df)
+      lm(formula2, data = df)
+    ),
+
+  joined_models %>%
+    split(.$YEAR) %>%
+    setNames(paste0("year_", unique(joined_models$YEAR))) %>%
+    lapply(\(df)
+      lm(formula2, data = df)
+    ),
+
+  joined_models %>%
+    filter(YEAR != model_year) %>%
+    split(.$model) %>%
+    setNames(
+      paste0(
+        "oos_",
+        unique(
+          filter(joined_models, YEAR != model_year)$model
+        )
+      )
+    ) %>%
+    lapply(\(df)
+      lm(formula2, data = df)
+    )
+)
+
+library(modelsummary)
+
+modelsummary(
+  list("All models" = regression_list$all_data, 
+       "logit" = regression_list$logit, 
+       "mlogit" = regression_list$mlogit,
+       "bespoke" = regression_list$bespoke,
+       "ppo" = regression_list$ppo,
+        "2019 Models" = regression_list$year_2019,
+       "2024 Models" = regression_list$year_2024
+  ),
+  stars = TRUE,
+  statistic = "({std.error})",
+  gof_omit = "AIC|BIC|Log.Lik",
+  title = "Basic Regressions"
+)
+
+modelsummary(
+  list(  
+       "logit" = regression_list$oos_logit, 
+       "mlogit" = regression_list$oos_mlogit,
+       "bespoke" = regression_list$oos_bespoke,
+       "ppo" = regression_list$oos_ppo
+       ),
+  stars = TRUE,
+  statistic = "({std.error})",
+  gof_omit = "AIC|BIC|Log.Lik",
+  title = "Out-of-sample Regressions", 
+  coef_rename = c("predicted_HH" = "Predicted HH")
+)
+ 
+# This method on its own is not so useful.  The reason bespoke looks so good here
+# is that everything dropped in the model goes into the intercept.  In truth
+# most of these models are all intercept based.  Hence the RMSE goes away because
+# we are dropping the sampling variation.  What I really need is to run the models again
+# but all on the same two tables, both with and without out of sample predictions
+# and then compare their RMSE, AIC, BIC, etc Problem comes in with the 
+    
+```
 

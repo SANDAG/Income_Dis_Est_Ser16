@@ -80,10 +80,10 @@ if (!all(years == 2019)) {
 #load the full dataset
 ipums_data <- read_ipums_micro(ddi)
 
-# Only work with housing units (TYPEHUGQ ==1)
-# So, we are excluding group quarters (TYPEHUGQ == 2 and TYPEHUGQ 3)
-# also limiting to San Diego county
-
+# Only work with housing units (GQ ==1)
+# So, we are excluding group quarters (GQ == 2 and GQ 3)
+# also limiting to San Diego county, extraction already limited to California. 
+ 
 data<- ipums_data %>% 
   filter(GQ == 1,
          COUNTYFIP==73,
@@ -97,14 +97,16 @@ stopifnot(all(data$GQ==1))
 
 # getting rid of statefips, countyfips, group quarters 
 # all observations are now identical for these variables 
-# the replication weights are not needed for complex survey design 
+# the replication weights are not needed for complex survey design but come 
+# automatically from IPUMS
+
 data <- data %>%
   select(-starts_with("REPWT"), -STATEFIP, -COUNTYFIP, -GQ)
 
-## create a subset for HH data to join later
+# Create a subset for HH data to join later
 data_HH <- subset(data, select = c(HHWT, PERNUM, PERWT, SERIAL, HHINCOME,AGE, RACE, RACED, SEX, HHTYPE, RELATE, RELATED, EMPSTAT, LABFORCE))
 
-### Household data: size, child present, senior present, and income cat ###
+# Household data: size, child present, senior present, and income category
 
 # Number of HH members, HHSize
 # Every person in the same household, ie. sharing the same SERIALNO
@@ -613,8 +615,8 @@ colnames(dummies) <- sub("^IncCat", "", colnames(dummies))
 # Bind them to the dataset 
 data <- bind_cols(data, dummies)
 
-
 ACS_2024_1Y <- data  
+
 # # Collapse into households, this keeps the first row of each SERIALNO
 # HH <- data %>% distinct(SERIAL, .keep_all = TRUE)
 
