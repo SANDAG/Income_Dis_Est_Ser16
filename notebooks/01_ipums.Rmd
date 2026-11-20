@@ -12,6 +12,7 @@ library(ipumsr)      # used to read IPUMS extracts
 library(dplyr)       # used for data-cleaning and filtering
 library(tidyverse)  #used to reshape long to wide on some variables
 
+
 # Load project configuration
 source(here::here("R", "load_config.R"))
 cfg <- load_config()
@@ -671,6 +672,7 @@ ACS_1year_means <-bind_rows(ACS_Means)
 ```{r}
 
 
+
 years <- c(2019, 2022, 2024)
 
 ACS_IncCat_Counts <- bind_rows(
@@ -684,7 +686,12 @@ ACS_IncCat_Counts <- bind_rows(
       mutate(YEAR = yr)
   })
 ) %>%
-  relocate(YEAR)
+  pivot_wider(
+    names_from = IncCat,
+    values_from = HH_Count
+  ) %>%
+  arrange(YEAR)
+
 
 ```
 

@@ -10,11 +10,23 @@ date: "2026-11-19"
 ```{r setup, include=FALSE}
 knitr::opts_chunk$set(echo = TRUE)
 
+library("dplyr") # data cleaning and handling
+
 # Load project configuration
 source(here::here("R", "load_config.R"))
 cfg <- load_config()
  
 ## file path for means and distributions
+
+input_means <- file.path(
+  cfg$paths$output_dir,
+  cfg$IPUMS$outout_file_ACS_1year_means
+)
+
+input_dis <- file.path(
+  cfg$paths$output_dir,
+  cfg$IPUMS$output_file_ACS_1year_IncDis
+)
 
 years <- c("2019", "2024")
 
@@ -85,7 +97,7 @@ for (yr in years) {
 
 
 ```{r}
-
+years <- c("2019", "2024")
 
 for (yr in years) {
 
@@ -133,6 +145,101 @@ ACS_1year_dis <-read.csv(file.path(input_dis))
 
 ## Calculate the number of HH in each category 
 ```{r}
+
+
+years <- c("2019", "2024")
+
+for (yr in years) {
+
+  assign(
+    paste0("predict_logit_HH", yr),
+    get(paste0("predict_logit_", yr)) %>%
+      mutate(
+        across(
+          -YEAR,
+          ~ .x * ACS_1year_means$NHH
+        )
+      )
+  )
+  
+  assign(
+    paste0("predict_mlogit_HH", yr),
+    get(paste0("predict_mlogit_", yr)) %>%
+      mutate(
+        across(
+          -YEAR,
+          ~ .x * ACS_1year_means$NHH
+        )
+      )
+  )
+
+  assign(
+    paste0("predict_bespoke_HH", yr),
+    get(paste0("predict_bespoke_", yr)) %>%
+      mutate(
+        across(
+          -YEAR,
+          ~ .x * ACS_1year_means$NHH
+        )
+      )
+  ) 
+  
+  assign(
+    paste0("predict_ppo_HH", yr),
+    get(paste0("predict_ppo_", yr)) %>%
+      mutate(
+        across(
+          -YEAR,
+          ~ .x * ACS_1year_means$NHH
+        )
+      )
+  )  
+}
+
+
+```
+
+## Run chi squared tests on the distributions 
+
+```{r}
+
+
+results_logit <- lapply(seq_len(nrow(ACS_1year_dis)), function(i) {
+
+  obs <- unlist(ACS_1year_dis[i, -1])
+  pred <- unlist(predict_logit_HH2019[i, -1])
+
+  test <- chisq.test(
+    x = obs,
+    p = pred / sum(pred)
+  )
+
+  data.frame(
+    Year = ACS_1year_dis$YEAR[i],
+    ChiSq = unname(test$statistic),
+    p_value = test$p.value
+  )
+})
+
+
+results_ppo <- lapply(seq_len(nrow(ACS_1year_dis)), function(i) {
+
+  obs <- unlist(ACS_1year_dis[i, -1])
+  pred <- unlist(predict_ppo_HH2019[i, -1])
+
+  test <- chisq.test(
+    x = obs,
+    p = pred / sum(pred)
+  )
+
+  data.frame(
+    Year = ACS_1year_dis$YEAR[i],
+    ChiSq = unname(test$statistic),
+    p_value = test$p.value
+  )
+})
+
+print(results_ppo)
 
 ```
 

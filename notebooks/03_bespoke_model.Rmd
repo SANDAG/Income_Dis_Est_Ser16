@@ -207,7 +207,7 @@ modelsummary(
   paired_models,
   stars = TRUE,
   gof_map = c("rmse", "aic", "bic", "adj.r.squared"),
-  title = "Original vs. Significant-Only Models",
+  title = "Original vs. Significant-Only Models 2024",
   #output = output_tex
 )
 ```
@@ -339,6 +339,35 @@ rowSums(pred_matrix)
 
  
 
+```
+## Produce a table comparing the two models, showing all coefficients and relevant model comparison statistics 
+
+
+```{r model-comparison, echo=FALSE, message=FALSE, warning=FALSE}
+ 
+
+# Pair each original model next to its refitted model
+paired_models <- map2(models, refitted_models, ~ list(Original = .x, Refitted = .y)) %>%
+  flatten()
+
+names(paired_models) <- paste0(
+  rep(names(models), each = 2),
+  c(" (Original)", " (Refitted)")
+)
+
+output_tex  <- file.path(
+    cfg$paths$output_PDF_dir,
+    cfg$Compare$pdf_bespoke
+  )
+
+# Render directly into the knitted R Markdown document
+modelsummary(
+  paired_models,
+  stars = TRUE,
+  gof_map = c("rmse", "aic", "bic", "adj.r.squared"),
+  title = "Original vs. Significant-Only Models 2019",
+  #output = output_tex
+)
 ```
 
 ## Export the predictions to csv
