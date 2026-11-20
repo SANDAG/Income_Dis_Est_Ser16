@@ -63,7 +63,7 @@ stopifnot(file.exists(input_dis))
 
 ACS_1year_2024 <- read.csv(file.path(input_2024)) ## loads 2024 data
 
-#restoring ordered factor nature to the ordered factor varriable
+#restoring ordered factor nature to the ordered factor variable
 ACS_1year_2024$IncCat <- ordered(ACS_1year_2024$IncCat, levels = paste0("Inc", 1:14))
 
 ACS_1year_means <-read.csv(file.path(input_means))
@@ -74,18 +74,6 @@ Weighted_IPUMS <-as_survey(ACS_1year_2024, id=CLUSTER,
                            weights=HHWT,
                            strata=STRATA,
                            nest=TRUE)
-
-## Goal here is to test the Partial Proportional Odds Model (PPO).  This model allows you 
-## to take advantage of the fact that you have ordinal data for variables which
-## meet the parallel lines assumption, and let them vary randomly for the variables
-## which do not meet that assumption. In order to test if we should use a PPO
-## we would normally use a Brant Test.  That test effectively looks at if the coefficients 
-## (B) are close enough in the separate logistic models to have parallel slopes
-## after accounting for difference from sampling. However we have a complex survey
-## design featuring stratification which does not line up with the random sampling
-## assumption in the Brant test. This modification of the Brant test which uses
-## R's survey package to introduce the sampling weights.  The blog post detailing it
-## can be found here https://notstatschat.rbind.io/2023/02/09/checking-proportionality-of-odds/
 
 # set our formula, this saves us from retyping it for all the individual logistic
 # regressions and lets us test alternative specifications
@@ -101,14 +89,27 @@ formula <- as.formula(
 ``` 
 ## Test which variables do or do not meet parallel lines assumption 
 ```{r}
+
+# Goal here is to test the Partial Proportional Odds Model (PPO).  This model allows you 
+# to take advantage of the fact that you have ordinal data for variables which
+# meet the parallel lines assumption, and let them vary randomly for the variables
+# which do not meet that assumption. In order to test if we should use a PPO
+# we would normally use a Brant Test.  That test effectively looks at if the coefficients 
+# (B) are close enough in the separate logistic models to have parallel slopes
+# after accounting for difference from sampling. However we have a complex survey
+# design featuring stratification which does not line up with the random sampling
+# assumption in the Brant test. This modification of the Brant test which uses
+# R's survey package to introduce the sampling weights.  The blog post detailing it
+# can be found here https://notstatschat.rbind.io/2023/02/09/checking-proportionality-of-odds/
+
 #setting up the ordered logit model with weights
 m1 <-svyolr(formula, design = Weighted_IPUMS)
 
 K<-length(m1$lev) # acquire levels of the ordered category IncCat
 P<-length(m1$coef) # acquire # of coefficients which is 6 but we can change the model
 
-#get influence function which allows covariance matrix to be computed
-#this fist block defines the influence function
+# Get influence function which allows covariance matrix to be computed
+# This fist block defines the influence function
 get_infl <-function(k,formula,design){
   y<-formula[[2]]
   formula[[2]]<-bquote(I(as.numeric(.(y))>.(k)))
@@ -116,7 +117,7 @@ get_infl <-function(k,formula,design){
   list(coef(mk), attr(mk, "influence"))
   }
 
-#this second block calls it and get the covariance matrix
+# This second block calls it and get the covariance matrix
 # lapply applied the function over each of our levels, running a binomial
 # regression for each level of the function, except the last which is the omitted category
 # combined_v is the variance covariance matrix based on the complex survey design totals
@@ -124,7 +125,7 @@ fits<-lapply(1:(K-1), function(k) get_infl(k, formula, Weighted_IPUMS))
 infs<-do.call(cbind,lapply(fits,"[[",2))
 combined_V<- vcov(svytotal(infs/weights(Weighted_IPUMS), Weighted_IPUMS))
 
-# now we extract the coefficients we care about to make the comparison
+# Now we extract the coefficients we care about to make the comparison
 conditional_V<- lapply(1:P, 
                        function(p) 1/diag(solve(combined_V[c(p+1+(0:(K-2))*(P+1)), c(p+1+(0:(K-2))*(P+1))])))
 coefs<-lapply(fits,"[[",1)
@@ -152,6 +153,11 @@ res$cutpoint <- factor(
 res$lower <- res$estimate - 1.96 * res$se
 res$upper <- res$estimate + 1.96 * res$se
 
+# Creates a first-pass visual test.  If point estimates are generally within
+# the SE bars of the other point estimates, then it likely meets the parallel 
+# lines assumption. Confirm with Brand test below but do not fully rely on one
+# or the other. 
+
 p<-ggplot(res,aes(y=cutpoint,col=cutpoint))+
   geom_point(aes(x=estimate))+
   geom_linerange(aes(xmin=lower,xmax=upper))+
@@ -166,20 +172,19 @@ print(p)
 
 ## modified Brant test
 ```{r}
-## here is then the modified Brant test which looks at how far away the 
-## unconstrained betas are from one another specifically testing if
-## B_{kp}=T_k*B_p 
-## T_k is a term for individual levels around the cut points.  
-## basically we want to know if the betas from running the Ordered Logit model
-## look like the Betas we get when we run the individual logit models, just
-## doing in that in a more statistically rigorous way which accounts for 
-## variance in the samples and complex survey sampling.
-
+# Here is the modified Brant test which looks at how far away the 
+# unconstrained betas are from one another specifically testing if
+# B_{kp}=T_k*B_p 
+# T_k is a term for individual levels around the cut points.  
+# basically we want to know if the betas from running the Ordered Logit model
+# look like the Betas we get when we run the individual logit models, just
+# doing in that in a more statistically rigorous way which accounts for 
+# variance in the samples and complex survey sampling.
 
 # Rerun the model in case the previous block was not run
 m1 <-svyolr(formula, design = Weighted_IPUMS)
 
-#terms needed for the Brant Test
+# Terms needed for the Brant Test
 K <- length(m1$lev)  # Acquire levels of the ordered category IncCat
 P <- length(m1$coef) # Acquire number of coefficients 
 
@@ -230,7 +235,7 @@ p_dir <- pchisq(brantTest_dir, df = (K - 2), lower.tail = FALSE)
 
 # Standard Omnibus & Per-Coefficient Brant Tests (Brant 1990, Section 2)
 # Tests strict equality of slopes across cut-points: B_{1p} = B_{2p} = ... = B_{(K-1)p}
-# E.G. are all the individual coefficients from the logit model the same for each category? 
+# E.G. "are all the individual coefficients from the logit model the same for each category?"
 
 D_std <- matrix(0, nrow = P * (K - 2), ncol = P * (K - 1))
 
@@ -243,7 +248,7 @@ for (k in 1:(K - 2)) {
   D_std[row_idx, col_idx_k] <- -diag(P)
 }
 
-# Standard Omnibus Test, tests all coefficents jointly
+# Standard Omnibus Test, tests all coefficients jointly
 diff_B <- D_std %*% B
 Var_diff <- D_std %*% VarB %*% t(D_std)
 X2_omnibus <- as.numeric(t(diff_B) %*% solve(Var_diff) %*% diff_B)
@@ -277,8 +282,8 @@ for (p in 1:P) {
   results[p + 2, 2:4] <- c(X2_p, df_p, p_val)
 }
 
-# Format and print output
-# Null is that the parallel lines assumption holds 
+# Format and print output directly into the R Markdown document 
+# Null is that the parallel lines assumption holds, small P=they are not parallel 
 # Note that Brant actually warns against using the Omnibus test, its included for
 # completeness
 
@@ -311,21 +316,7 @@ Weighted_IPUMS <-as_survey(ACS_1year_2019, id=CLUSTER,
                            weights=HHWT,
                            strata=STRATA,
                            nest=TRUE)
-
-## Goal here is to test the Partial Proportional Odds Model (PPO).  This model allows you 
-## to take advantage of the fact that you have ordinal data for variables which
-## meet the parallel lines assumption, and let them vary randomly for the variables
-## which do not meet that assumption. In order to test if we should use a PPO
-## we would normally use a Brant Test.  That test effectively looks at if the coefficients 
-## (B) are close enough in the separate logistic models to have parallel slopes
-## after accounting for difference from sampling. However we have a complex survey
-## design featuring stratification which does not line up with the random sampling
-## assumption in the Brant test. This modification of the Brant test which uses
-## R's survey package to introduce the sampling weights.  The blog post detailing it
-## can be found here https://notstatschat.rbind.io/2023/02/09/checking-proportionality-of-odds/
-
-# set our formula, this saves us from retyping it for all the individual logistic
-# regressions and lets us test alternative specifications
+ 
 
 
 formula <- as.formula(
@@ -339,6 +330,19 @@ formula <- as.formula(
 
 ## Test which variables do or do not meet parallel lines assumption 
 ```{r}
+
+# Goal here is to test the Partial Proportional Odds Model (PPO).  This model allows you 
+# to take advantage of the fact that you have ordinal data for variables which
+# meet the parallel lines assumption, and let them vary randomly for the variables
+# which do not meet that assumption. In order to test if we should use a PPO
+# we would normally use a Brant Test.  That test effectively looks at if the coefficients 
+# (B) are close enough in the separate logistic models to have parallel slopes
+# after accounting for difference from sampling. However we have a complex survey
+# design featuring stratification which does not line up with the random sampling
+# assumption in the Brant test. This modification of the Brant test which uses
+# R's survey package to introduce the sampling weights.  The blog post detailing it
+# can be found here https://notstatschat.rbind.io/2023/02/09/checking-proportionality-of-odds/
+
 #setting up the ordered logit model with weights
 m1 <-svyolr(formula, design = Weighted_IPUMS)
 
@@ -515,8 +519,8 @@ for (p in 1:P) {
   results[p + 2, 2:4] <- c(X2_p, df_p, p_val)
 }
 
-# Format and print output
-# Null is that the parallel lines assumption holds 
+# Format and print output directly into the R Markdown document 
+# Null is that the parallel lines assumption holds, small P=they are not parallel 
 # Note that Brant actually warns against using the Omnibus test, its included for
 # completeness
 
@@ -524,8 +528,7 @@ results$Chi2 <- round(results$Chi2, 3)
 results$p_value <- round(results$p_value, 4)
 print(results, row.names = FALSE)
 
-# clear these away to rerun the Brant test later.  We could rename them below if
-# we want to have both Brant tests for some reason 
+# Clean up data
  rm(K, P, fits, infs, combined_V, conditional_V, coefs, D, B, VarB, VarBinv, deltahat, VarDelta, brantTest)
 
 

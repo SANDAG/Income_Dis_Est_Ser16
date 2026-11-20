@@ -75,18 +75,23 @@ Weighted_IPUMS <-as_survey(ACS_1year_2024, id=CLUSTER,
 y_vector <-  names(ACS_1year_2024 %>% select(num_range("Inc", 1:14))) # vector of Inc to loop over
 
 
-## the for loop using lapply, takes in the vector of Inc variables, combines
-## the formula of x and y variables, then runs them through the svglm function
-## saves the results in the models object.  
+# The for loop using lapply, takes in the vector of Inc variables, combines
+# the formula of x and y variables, then runs them through the svglm function
+# saves the results in the models object.  
 models <- lapply(y_vector, function(y) {
   
   logitformula <- reformulate(termlabels = x_vector, response = y)
+
+# Family is quasibinomial. Binomial assumes integers, but complex weighting can 
+# result in non-integer counts, which throws a warning if family is binomial
+# the survey package itself recommends setting to quasibinomial to avoid errors
+# http://r-survey.r-forge.r-project.org/pkgdown/docs/reference/svyglm.html
   
-  svyglm(logitformula, design = Weighted_IPUMS, family =  binomial (link = "logit"))
+  svyglm(logitformula, design = Weighted_IPUMS, family =  quasibinomial (link = "logit"))
 })
 
-## adds the Inc# as the name of the lists stored in models, easier to call
-## e.g. if you want the results for Inc1 you can call models$Inc1 
+# Adds the Inc# as the name of the lists stored in models, easier to call
+# e.g. if you want the results for Inc1 you can call models$Inc1 
 
 names(models) <- y_vector
 
@@ -98,14 +103,11 @@ sig_coeffs_list <- map(models, ~ {
     filter(term != "(Intercept)") # Optional: remove intercept
 })
 
-# View the resulting list
-#print(sig_coeffs_list)
-
-# Run new models using only the statistically significant varriables 
+# Run new models using only the statistically significant variables 
 refitted_models <- map2(models, sig_coeffs_list, ~ {
   sig_terms <- .y$term
-  
-  # Handle cases where a model had 0 significant predictors (intercept-only)
+
+# Handle cases where a model had 0 significant predictors (intercept-only)
   new_formula <- if (length(sig_terms) > 0) {
     reformulate(sig_terms, response = ".")
   } else {
@@ -115,9 +117,6 @@ refitted_models <- map2(models, sig_coeffs_list, ~ {
   update(.x, formula = new_formula)
 })
 
-#View the resulting models
-
-#print(refitted_models)
 
 # Generate predicted probabilities
 pred_matrix <- sapply(refitted_models, function(mod) {
@@ -129,55 +128,11 @@ pred_matrix <- sapply(refitted_models, function(mod) {
 pred_bespoke_2024 <- as.data.frame(pred_matrix) %>%
   mutate(YEAR = ACS_1year_means$YEAR) %>%
   relocate(YEAR)
-# Sum probabilities across income categories for each observation
+
+# Sum probabilities across income categories for each observation make sure they
+# are close to 1
 rowSums(pred_matrix)
 
-# 
-# get_metrics <- function(model_list, model_type) {
-#   imap_dfr(model_list, ~ {
-#     g <- glance(.x)
-#     
-#     tibble(
-#       model_name = .y,
-#       version = model_type,
-#       RMSE = sqrt(mean(residuals(.x)^2)),
-#       AIC = g$AIC,
-#       BIC = g$BIC,
-#       adj_r_squared = if ("adj.r.squared" %in% names(g)) g$adj.r.squared else NA_real_
-#     )
-#   })
-# }
-# 
-# comparison_df <- bind_rows(
-#   get_metrics(models, "Original"),
-#   get_metrics(refitted_models, "Refitted")
-# ) %>%
-#   arrange(model_name, version)
-# 
-# #print(comparison_df, n = Inf)
-# 
-# comparison_wide <- comparison_df %>%
-#   pivot_wider(
-#     names_from = version,
-#     values_from = c(RMSE, AIC, BIC, adj_r_squared)
-#   ) %>%
-#   mutate(
-#     RMSE_diff = RMSE_Refitted - RMSE_Original,
-#     AIC_diff = AIC_Refitted - AIC_Original,
-#     BIC_diff = BIC_Refitted - BIC_Original,
-#     adj_r2_diff = adj_r_squared_Refitted - adj_r_squared_Original
-#   )
-# 
-# #print(comparison_wide, width = Inf)
-# 
-# 
-# # Clean up column names for display
-# clean_comparison <- comparison_df %>%
-#   rename(
-#     Model = model_name,
-#     Version = version,
-#     `Adj. R²` = adj_r_squared
-#   )
 
  
 
@@ -202,7 +157,14 @@ output_tex  <- file.path(
     cfg$Compare$pdf_bespoke
   )
 
-# Render directly into the knitted R Markdown document
+# Renders a table comparing the full and refitted model directly into the
+# knitted R Markdown document.  Just a quality check to make sure its working
+# and in case one wants to see what is significant.  Reminder these are log-odds
+# not probabilities. 
+# Final 4 rows are most important.  In general we want models with lower RMSE
+# We also want lower AIC and BIC, AIC is probably more useful here given the 
+# Limited number of variables. Finally Adjusted R^2 we want as large as possible
+
 modelsummary(
   paired_models,
   stars = TRUE,
@@ -240,7 +202,7 @@ models <- lapply(y_vector, function(y) {
   
   logitformula <- reformulate(termlabels = x_vector, response = y)
   
-  svyglm(logitformula, design = Weighted_IPUMS, family =  binomial (link = "logit"))
+  svyglm(logitformula, design = Weighted_IPUMS, family =  quasibinomial (link = "logit"))
 })
 
 ## adds the Inc# as the name of the lists stored in models, easier to call
@@ -290,52 +252,6 @@ pred_bespoke_2019 <- as.data.frame(pred_matrix) %>%
 # Sum probabilities across income categories for each observation
 rowSums(pred_matrix)
 
-# 
-# get_metrics <- function(model_list, model_type) {
-#   imap_dfr(model_list, ~ {
-#     g <- glance(.x)
-#     
-#     tibble(
-#       model_name = .y,
-#       version = model_type,
-#       RMSE = sqrt(mean(residuals(.x)^2)),
-#       AIC = g$AIC,
-#       BIC = g$BIC,
-#       adj_r_squared = if ("adj.r.squared" %in% names(g)) g$adj.r.squared else NA_real_
-#     )
-#   })
-# }
-# 
-# comparison_df <- bind_rows(
-#   get_metrics(models, "Original"),
-#   get_metrics(refitted_models, "Refitted")
-# ) %>%
-#   arrange(model_name, version)
-# 
-# #print(comparison_df, n = Inf)
-# 
-# comparison_wide <- comparison_df %>%
-#   pivot_wider(
-#     names_from = version,
-#     values_from = c(RMSE, AIC, BIC, adj_r_squared)
-#   ) %>%
-#   mutate(
-#     RMSE_diff = RMSE_Refitted - RMSE_Original,
-#     AIC_diff = AIC_Refitted - AIC_Original,
-#     BIC_diff = BIC_Refitted - BIC_Original,
-#     adj_r2_diff = adj_r_squared_Refitted - adj_r_squared_Original
-#   )
-# 
-# #print(comparison_wide, width = Inf)
-# 
-# 
-# # Clean up column names for display
-# clean_comparison <- comparison_df %>%
-#   rename(
-#     Model = model_name,
-#     Version = version,
-#     `Adj. R²` = adj_r_squared
-#   )
 
  
 
@@ -360,7 +276,14 @@ output_tex  <- file.path(
     cfg$Compare$pdf_bespoke
   )
 
-# Render directly into the knitted R Markdown document
+# Renders a table comparing the full and refitted model directly into the
+# knitted R Markdown document.  Just a quality check to make sure its working
+# and in case one wants to see what is significant.  Reminder these are log-odds
+# not probabilities. 
+# Final 4 rows are most important.  In general we want models with lower RMSE
+# We also want lower AIC and BIC, AIC is probably more useful here given the 
+# Limited number of variables. Finally Adjusted R^2 we want as large as possible
+
 modelsummary(
   paired_models,
   stars = TRUE,

@@ -51,7 +51,7 @@ ppo_files <- list(
   `2024` = cfg$Predict$output_file_ppo_2024_1year
 )
 
-# Construct input file paths
+# Construct input file paths in a loop
 for (yr in years) {
 
   assign(
@@ -99,6 +99,8 @@ for (yr in years) {
 ```{r}
 years <- c("2019", "2024")
 
+# Load data in a loop
+
 for (yr in years) {
 
   assign(
@@ -130,11 +132,7 @@ for (yr in years) {
   )    
 }
 
- 
-
-#restoring ordered factor nature to the ordered factor varriable
-
-
+# Load the means and distibution data which covers all years
 ACS_1year_means <-read.csv(file.path(input_means))
 
 ACS_1year_dis <-read.csv(file.path(input_dis))
@@ -148,6 +146,11 @@ ACS_1year_dis <-read.csv(file.path(input_dis))
 
 
 years <- c("2019", "2024")
+
+# Probabilities just list the probability of an average household belonging to
+# each income category.  Here they are multiplied by the number of households
+# in San Diego that year to produce counts of the number of predicted HH per bin
+# new df are produced for each model which insert "HH" before the year
 
 for (yr in years) {
 
@@ -203,8 +206,14 @@ for (yr in years) {
 
 ```{r}
 
+# Chi-squared test compares the two distributions.  The test stat formula is
+# Sum_{i=1}^n (Oi-Ei)^2/Ei
+# Where Oi is observed number of HH in bin i, E is the estimated number of HH
+# in bin i.  Sums from bin 1 to bin n which is 14 in our case. 
+# compares the test-stat to the chi-squared distribution. 
+# Null: the distributions are the same -> small p stat indicates they are different
 
-results_logit <- lapply(seq_len(nrow(ACS_1year_dis)), function(i) {
+results_logit_2019 <- lapply(seq_len(nrow(ACS_1year_dis)), function(i) {
 
   obs <- unlist(ACS_1year_dis[i, -1])
   pred <- unlist(predict_logit_HH2019[i, -1])
@@ -221,8 +230,50 @@ results_logit <- lapply(seq_len(nrow(ACS_1year_dis)), function(i) {
   )
 })
 
+print("logit chi-squared")
+print(results_logit_2019)
 
-results_ppo <- lapply(seq_len(nrow(ACS_1year_dis)), function(i) {
+results_mlogit_2019 <- lapply(seq_len(nrow(ACS_1year_dis)), function(i) {
+
+  obs <- unlist(ACS_1year_dis[i, -1])
+  pred <- unlist(predict_mlogit_HH2019[i, -1])
+
+  test <- chisq.test(
+    x = obs,
+    p = pred / sum(pred)
+  )
+
+  data.frame(
+    Year = ACS_1year_dis$YEAR[i],
+    ChiSq = unname(test$statistic),
+    p_value = test$p.value
+  )
+})
+
+print("mlogit chi-squared")
+print(results_mlogit_2019)
+
+results_bespoke_2019 <- lapply(seq_len(nrow(ACS_1year_dis)), function(i) {
+
+  obs <- unlist(ACS_1year_dis[i, -1])
+  pred <- unlist(predict_bespoke_HH2019[i, -1])
+
+  test <- chisq.test(
+    x = obs,
+    p = pred / sum(pred)
+  )
+
+  data.frame(
+    Year = ACS_1year_dis$YEAR[i],
+    ChiSq = unname(test$statistic),
+    p_value = test$p.value
+  )
+})
+
+print("bespoke chi-squared")
+print(results_bespoke_2019)
+
+results_ppo_2019 <- lapply(seq_len(nrow(ACS_1year_dis)), function(i) {
 
   obs <- unlist(ACS_1year_dis[i, -1])
   pred <- unlist(predict_ppo_HH2019[i, -1])
@@ -239,7 +290,8 @@ results_ppo <- lapply(seq_len(nrow(ACS_1year_dis)), function(i) {
   )
 })
 
-print(results_ppo)
+print("ppo chi-squared")
+print(results_ppo_2019)
 
 ```
 

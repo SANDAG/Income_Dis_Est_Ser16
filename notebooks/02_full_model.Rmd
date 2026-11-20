@@ -159,7 +159,7 @@ models <- lapply(y_vector, function(y) {
   
   logitformula <- reformulate(termlabels = x_vector, response = y)
   
-  svyglm(logitformula, design = Weighted_IPUMS, family =  binomial (link = "logit"))
+  svyglm(logitformula, design = Weighted_IPUMS, family =  quasibinomial (link = "logit"))
 })
 
 ## adds the Inc# as the name of the lists stored in models, easier to call
