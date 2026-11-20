@@ -69,20 +69,20 @@ Completed:
 - [X] Create separate binary indicator income category variables
 - [X] Export CSVs and verify successful read-back.
 - [X] Review IPUMS person/household weighting assumptions.
-- [X] Create IPUMS observed averages for 2019, 2022, 2024
-- [X] Create IPUMS observed HH per income bracket for 2019,2022,2024
+- [X] Create IPUMS observed averages for 2019, 2022, 2024 for coefficents
+- [X] Create IPUMS observed HH per income bracket for 2019, 2022, 2024
 - [X] Review for any missing values.
       
 Remaining:
 
-
+- [ ] Include IPUMS/Census correction for rolling nature of ACS data collection 
 - [ ] Add basic data-quality checks. (partial)
 - [ ] Compare outputs against the legacy workflow.
 - [ ] Document variable definitions, temporal coverage, and known limitations.
 
 ### Phase 2 — Full model
 
-**Status: Partially started in old code. Second Highest-priority new development task.**
+**Status: Completed but room for improvements in parameterization and automatic checks.**
 
 Source: Section 3 of `ipums_acs_1year.csv` `ipums_acs_5year.csv`
 
@@ -91,22 +91,22 @@ Planned notebook: `notebooks/02_full_model.Rmd`
 Expected output: `full_model.xlsx` May also produce a an intermediate file saving the R models for future prediction 
 
 Completed:
-- [X] Create complex survey design.
-- [X] Create loopable model for regressions over income catagories.
-- [X] Load IPUMS csv data.
-- [X] Filter to San Diego County, and year = 2024.
-- [X] create complex survey design.
-- [X] Input predicted values for independent variables and output predicted percentages.
-- [X] Row sum the probabilities to ensure they are close to 1, fall back to mlogit if not.
-- [X] Export the predicted probabilities in an csv format.  
+- [X] Load 2019 and 2024 data from csv.
+- [X] Create complex survey design object accounting for weigthing.
+- [X] Create a loop to run and store individual logit regressions using svy_glm and the complex survey design object for both 2019 and 2024 data.
+- [X] Run multinomial logit regressions using svy_glm and the complex survey design object for both 2019 and 2024 data.
+- [X] Use the ACS year means and the recovered coefficients to predict percentages for each household income catagory.
+- [X]  Row sum the logit probabilities to ensure they are close to 1.
+- [X]  Save the predicted percentages from both models as csv files for use in later steps.
       
 Remaining:
  
+- [ ] Parameterize workflow fully for future reuse.
 - [ ] Document variable definitions, temporal coverage, and known limitations.
 
 ### Phase 3 — Bespoke model
 
-**Status: Not started. Third Highest-priority new development task.**
+**Status: Completed but room for improvements in parameterization and automatic checks.**
 
 Source: Section 3 of `ipums_acs_1year.csv` `ipums_acs_5year.csv`
 
@@ -115,16 +115,19 @@ Planned notebook: `notebooks/03_bespoke_model.Rmd`
 Expected output: `bespoke_model.xlsx` May also produce a an intermediate file saving the R models for future prediction 
 
 Completed
-- [X] create complex survey design.
-- [X] Create loopable model for regressions over income catagories.-
-- [X] Load IPUMS csv data.
+- [X] Load 2019 and 2024 data from csv.
+- [X] Create complex survey design object accounting for weigthing.
+- [X] Create a loop to run and store individual logit regressions using svy_glm and the complex survey design object for both 2019 and 2024 data.
+- [X] Create loopable model for regressions over income catagories.
 - [X] For each income category, rerun the model with only the statistically signficiant varriables.
-- [X] Compare the bespoke and full form R values for goodness of fit, and run an F test on if full form model coefficents are jointly signficant.
-- [X] After selecting final models, input predicted values for independent variables and output predicted percentages.
+- [X] Compare the bespoke and full form R values for goodness of fit using RMSE, AIC, BIC, and Adjusted R squared values.
+- [X] After selecting final models, input ACS mean values for independent variables and output predicted percentages.
 - [X] Row sum the probabilities to ensure they are close to 1.
+- [X] Export the predicted probabilities in CSV format for use later in the code.
       
 Remaining:
-- [ ] Export the predicted probabilities in an excel format.  
+- [ ] Parameterize workflow fully for future reuse.
+- [ ] Export the model comparison tables to include in documentation files. 
 - [ ] Document variable definitions, temporal coverage, and known limitations.
 
 ### Phase 4 Partial Proportional Odds (PPO Logit) model
@@ -138,14 +141,16 @@ Planned notebook: `notebooks/04_ppo_logit.Rmd`
 Expected output: `ppo_model.xlsx` May also produce a an intermediate file saving the R models for future prediction 
 
 Completed:
-- [X] Load IPUMS csv data.
-- [X] create complex survey design. 
+- [X] Load 2019 and 2024 data from csv.
+- [X] Create complex survey design object accounting for weigthing.
 - [X] Create a visual test with point estimates and coefficient bars to determine which variables to select as parellel or model specific.
-- [X] Create a modified Wald test that incorporates weights from the complex survey design
-- [X] After selecting final models, input predicted values for independent variables and output predicted percentages.
+- [X] Create a modified Wald test that incorporates weights from the complex survey design.
+- [X] Based on visual and Wald test select variables to remain parallel and run the PPO model for each year.
+- [X] After running the PPO models, input ACS mean values for independent variables and output predicted percentages.
+- [X] Export the predicted probabilities in CSV format for use later in the code.
        
 Remaining:
-
+- [ ] Parameterize workflow fully for future reuse.
 - [ ] Export the predicted probabilities in an excel format.  
 - [ ] Document variable definitions, temporal coverage, and known limitations.
 
@@ -183,14 +188,14 @@ Source: Section 3 of `ipums_acs_1year.csv` `ipums_acs_5year.csv`
 Planned notebook: `notebooks/06_model_selection.Rmd`
 
 Expected output: `model_comparison.pdf`  
+Completed:
+- [X] Load predictions from the other models (logit, mlogit, bespoke, PPO) for each year.
+- [X] Load the mean values and the observed HH by income bucket.  
+- [X] Turn the predicted probabilities into HH counts. 
+- [X] Input observed means for coefficients from the ACS data for 2019, 2022, and 2024 and output predictions for each of those models.
 
 Remaining:
-- [ ] Load IPUMS csv data.
-- [ ] Filter to San Diego County.
-- [ ] Create 2 dataframes one for base year (2022) and one for most recent year (2024). 
-- [ ] create complex survey design.
-- [ ] Run the full, bespoke, and Ologit models on the base year data following the procedures from each of those independent files.
-- [ ] Input observed means for coefficients from the 2024 ACS data and output predictions for each of those models.
+
 - [ ] Input the estimated coefficient values from the Series 15 predictions for 2024 into each model, calculating the predicted distributions.
 - [ ] Calculate counts from the 2024 ACS of each income catagory directly.
 - [ ] Compare the count of households in each income category between the three model predicted distributions, the ACS observed means, and the ACS observed counts, vis a Ridgeline Plot.
