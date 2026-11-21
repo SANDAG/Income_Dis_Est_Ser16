@@ -420,7 +420,26 @@ modelsummary(
 # most of these models are all intercept based.  Hence the RMSE goes away because
 # we are dropping the sampling variation.  What I really need is to run the models again
 # but all on the same two tables, both with and without out of sample predictions
-# and then compare their RMSE, AIC, BIC, etc Problem comes in with the 
+# and then compare their RMSE, AIC, BIC, etc
+
+# Ok yes running a placebo through the logit model shows the problem.  
+# the placebo is a random integer.  It of course has no relation to a HH belonging
+# to a given income catagory.  In the regression itself, this of course produces
+# a horrible set of test statistics.  When I bring it here to compare, it produces
+# equally poor results for the full model.  Yet for some reason the OOS predictions
+# are close to 1?
+
+# ok the logit returns the wrong info only when the mean values are off. If they are
+# actually close to the mean (for placebo that is 50) when predicting, it is almost
+# perfectly predictive, so this test tells us more about the sample noise than
+# the predictive power of our model. That being said the code for OOS predictions is also wrong
     
+oos_2019 <- joined_models %>%
+  filter(model=="logit", YEAR!=2019, model_year ==2019)
+
+test_oos <- lm(observed_HH ~ 0 + predicted_HH,
+               data=oos_2019)
+
+modelsummary(test_oos)
 ```
 
