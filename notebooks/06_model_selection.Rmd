@@ -345,101 +345,18 @@ joined_models <- all_models_long %>% right_join(obsered_long, by=c("IncCat", "YE
 #restoring ordered factor nature to the ordered factor variable
 joined_models$IncCat <- ordered(joined_models$IncCat, levels = paste0("Inc", 1:14))
 
-formula2 = as.formula(observed_HH ~ 0 + predicted_HH)
-
-regression_list <- c(
-
-  list(
-    all_data = lm(formula2,
-                  data = joined_models)
-  ),
-     
-
-  joined_models %>%
-    split(.$model) %>%
-    lapply(\(df)
-      lm(formula2, data = df)
-    ),
-
-  joined_models %>%
-    split(.$YEAR) %>%
-    setNames(paste0("year_", unique(joined_models$YEAR))) %>%
-    lapply(\(df)
-      lm(formula2, data = df)
-    ),
-
-  joined_models %>%
-    filter(YEAR != model_year) %>%
-    split(.$model) %>%
-    setNames(
-      paste0(
-        "oos_",
-        unique(
-          filter(joined_models, YEAR != model_year)$model
-        )
-      )
-    ) %>%
-    lapply(\(df)
-      lm(formula2, data = df)
-    )
-)
-
-library(modelsummary)
-
-modelsummary(
-  list("All models" = regression_list$all_data, 
-       "logit" = regression_list$logit, 
-       "mlogit" = regression_list$mlogit,
-       "bespoke" = regression_list$bespoke,
-       "ppo" = regression_list$ppo,
-        "2019 Models" = regression_list$year_2019,
-       "2024 Models" = regression_list$year_2024
-  ),
-  stars = TRUE,
-  statistic = "({std.error})",
-  gof_omit = "AIC|BIC|Log.Lik",
-  title = "Basic Regressions"
-)
-
-modelsummary(
-  list(  
-       "logit" = regression_list$oos_logit, 
-       "mlogit" = regression_list$oos_mlogit,
-       "bespoke" = regression_list$oos_bespoke,
-       "ppo" = regression_list$oos_ppo
-       ),
-  stars = TRUE,
-  statistic = "({std.error})",
-  gof_omit = "AIC|BIC|Log.Lik",
-  title = "Out-of-sample Regressions", 
-  coef_rename = c("predicted_HH" = "Predicted HH")
-)
+ # calculate RMSE step by step then combine into one step
  
-# This method on its own is not so useful.  The reason bespoke looks so good here
-# is that everything dropped in the model goes into the intercept.  In truth
-# most of these models are all intercept based.  Hence the RMSE goes away because
-# we are dropping the sampling variation.  What I really need is to run the models again
-# but all on the same two tables, both with and without out of sample predictions
-# and then compare their RMSE, AIC, BIC, etc
-
-# Ok yes running a placebo through the logit model shows the problem.  
-# the placebo is a random integer.  It of course has no relation to a HH belonging
-# to a given income catagory.  In the regression itself, this of course produces
-# a horrible set of test statistics.  When I bring it here to compare, it produces
-# equally poor results for the full model.  Yet for some reason the OOS predictions
-# are close to 1?
-
-# ok the logit returns the wrong info only when the mean values are off. If they are
-# actually close to the mean (for placebo that is 50) when predicting, it is almost
-# perfectly predictive, so this test tells us more about the sample noise than
-# the predictive power of our model. That being said the code for OOS predictions is also wrong
-    
-oos_2019 <- joined_models %>%
-  filter(model=="logit", YEAR!=2019, model_year ==2019)
-
-test_oos <- lm(observed_HH ~ 0 + predicted_HH,
-               data=oos_2019)
-
-modelsummary(test_oos)
+ #error
+ joined_models_RMSE <- joined_models %>%
+   mutate(sq_error = (predicted_HH - observed_HH)^2) %>%
+   filter_out(model_year==YEAR) %>%
+   group_by(model) %>%
+   summarise(mean_sq_error= mean(sq_error)) %>%
+   mutate(RMSE = sqrt(mean_sq_error)) %>%
+   select(model, RMSE) %>%
+   rename(Model = model)
+ 
+ datasummary_df(joined_models_RMSE)
 ```
 
