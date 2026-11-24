@@ -175,7 +175,7 @@ modelsummary(
 ```
 
 
-## load the 2019 data and run the model, using model summary to report the statistically significant coefficents. 
+## load the 2019 data and run the model, using model summary to report the statistically significant coefficients. 
  
 ```{r}
 

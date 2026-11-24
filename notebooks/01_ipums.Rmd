@@ -18,11 +18,10 @@ source(here::here("R", "load_config.R"))
 cfg <- load_config()
 
 # Define IPUMS input files 2019
-ipums_2019 <- file.path(
+ipums_2019_1year <- file.path(
   cfg$paths$input_dir,
   cfg$IPUMS$input_2019
 )
-
 
 # Define IPUMS input files 2022
 ipums_2022_1year <- file.path(
@@ -53,577 +52,242 @@ stopifnot(file.exists(ipums_2024_5year))
 
 ```
 
-## Load 2019 data single year data
-
 ```{r}
 
-ddi <-read_ipums_ddi(ipums_2019)
-
-
-year_check <- read_ipums_micro(
-  ddi,
-  vars = "YEAR"
+ipums_files <- list(
+  "2019" = ipums_2019_1year,
+  "2022" = ipums_2022_1year,
+  "2024" = ipums_2024_1year
 )
 
-## check it is the right year before we even fully load the dataset
-years <- unique(year_check$YEAR)
+cpi <- c(
+  "2019" = 299.433,
+  "2022" = 344.416,
+  "2024" = 373.321   
+)
 
-if (!all(years == 2019)) {
-  stop(
-    sprintf(
-      "Expected YEAR=2022. Found: %s",
-      paste(sort(years), collapse = ", ")
+target_cpi <- cpi["2022"]   # all incomes converted to 2022 dollars
+
+
+process_ipums <- function(yr, ipums_file, cpi_value, target_cpi) {
+
+  ddi <- read_ipums_ddi(ipums_file)
+
+  year_check <- read_ipums_micro(
+    ddi,
+    vars = "YEAR"
+  )
+
+  years_found <- unique(year_check$YEAR)
+
+  if (!all(years_found == yr)) {
+    stop(
+      sprintf(
+        "Expected YEAR=%s. Found: %s",
+        yr,
+        paste(sort(years_found), collapse = ", ")
+      )
+    )
+  }
+
+  ipums_data <- read_ipums_micro(ddi)
+
+  data <- ipums_data %>%
+    filter(
+      GQ == 1,
+      COUNTYFIP == 73,
+      YEAR == yr
+    )
+
+  stopifnot(all(data$STATEFIP == 6))
+  stopifnot(all(data$COUNTYFIP == 73))
+  stopifnot(all(data$GQ == 1))
+
+  data <- data %>%
+    select(
+      -starts_with("REPWT"),
+      -STATEFIP,
+      -COUNTYFIP,
+      -GQ
+    )
+
+  data_HH <- subset(
+    data,
+    select = c(
+      HHWT, PERNUM, PERWT, SERIAL,
+      HHINCOME, AGE, RACE, RACED,
+      SEX, HHTYPE, RELATE, RELATED,
+      EMPSTAT, LABFORCE
     )
   )
+
+  # Household Size
+  HHSize <- data_HH %>%
+    group_by(SERIAL) %>%
+    summarise(
+      HHSize = n(),
+      .groups = "drop"
+    )
+
+  data <- right_join(data, HHSize, by = "SERIAL")
+
+  # Children
+  HHChild <- data_HH %>%
+    select(SERIAL, RELATE, AGE) %>%
+    mutate(
+      IsChild = if_else(
+        !(RELATE %in% c(1, 2)) & AGE < 18,
+        1,
+        0
+      )
+    ) %>%
+    group_by(SERIAL) %>%
+    summarise(
+      ChildPresent = max(IsChild, na.rm = TRUE),
+      .groups = "drop"
+    )
+
+  data <- right_join(data, HHChild, by = "SERIAL")
+
+  # Seniors
+  HHSenior <- data_HH %>%
+    select(SERIAL, AGE) %>%
+    mutate(
+      SeniorPresent = if_else(AGE >= 65, 1, 0)
+    ) %>%
+    group_by(SERIAL) %>%
+    summarise(
+      SeniorPresent = max(SeniorPresent, na.rm = TRUE),
+      .groups = "drop"
+    )
+
+  data <- right_join(data, HHSenior, by = "SERIAL")
+
+  # Labor force
+  data <- data %>%
+    mutate(
+      LF = if_else(
+        (AGE >= 16 & AGE <= 70) &
+          LABFORCE == 2,
+        1,
+        0
+      )
+    )
+
+  # Sex
+  data <- data %>%
+    mutate(
+      SEX = if_else(SEX == 1, 1, 0)
+    )
+
+  # Age categories
+  data <- data %>%
+    mutate(
+      AgeCode = case_when(
+        AGE < 15 ~ 1,
+        AGE >= 15 & AGE < 25 ~ 2,
+        AGE >= 25 & AGE < 70 ~ 3,
+        AGE >= 70 ~ 4,
+        TRUE ~ NA_real_
+      )
+    )
+
+  data <- data %>%
+    filter(RELATE == 1)
+
+  data <- data %>%
+    filter(HHINCOME > 0)
+
+  # CPI adjustment to 2022 dollars
+  data <- data %>%
+    mutate(
+      ADJ_HHINCOME = HHINCOME *
+        (target_cpi / cpi_value)
+    )
+
+  cut_points <- c(
+    0, 15000, 30000, 45000, 60000,
+    75000, 100000, 125000, 150000,
+    200000, 300000, 500000,
+    700000, 900000, Inf
+  )
+
+  incrementing_labels <- paste0(
+    "Inc",
+    seq_len(length(cut_points) - 1)
+  )
+
+  data <- data %>%
+    mutate(
+      IncCat = cut(
+        ADJ_HHINCOME,
+        breaks = cut_points,
+        labels = incrementing_labels,
+        right = FALSE,
+        ordered_result = TRUE
+      )
+    )
+
+  dummies <- as.data.frame(
+    model.matrix(~ IncCat - 1, data = data)
+  )
+
+  colnames(dummies) <- sub(
+    "^IncCat",
+    "",
+    colnames(dummies)
+  )
+
+  data <- bind_cols(data, dummies)
+  
+
+data <- data %>%
+  mutate(
+    placebo = sample(
+      1:100,
+      size = nrow(data),
+      replace = TRUE
+    )
+  )
+
+data <- data %>%
+  mutate(
+    placebo_trend = placebo*(YEAR-2018)
+    )
+
+  rm(
+    ddi,
+    ipums_data,
+    year_check,
+    years_found,
+    data_HH,
+    HHSize,
+    HHChild,
+    HHSenior,
+    dummies
+  )
+
+  data
 }
 
-#load the full dataset
-ipums_data <- read_ipums_micro(ddi)
+years <- c(2019, 2022, 2024)
 
-# Only work with housing units (GQ ==1)
-# So, we are excluding group quarters (GQ == 2 and GQ 3)
-# also limiting to San Diego county, extraction already limited to California. 
- 
-data<- ipums_data %>% 
-  filter(GQ == 1,
-         COUNTYFIP==73,
-         YEAR == 2019)
-
-# Confirming state and county only San Diego and CA and that our GQ filter worked
-
-stopifnot(all(data$STATEFIP == 6))
-stopifnot(all(data$COUNTYFIP==73))
-stopifnot(all(data$GQ==1))
-
-# getting rid of statefips, countyfips, group quarters 
-# all observations are now identical for these variables 
-# the replication weights are not needed for complex survey design but come 
-# automatically from IPUMS
-
-data <- data %>%
-  select(-starts_with("REPWT"), -STATEFIP, -COUNTYFIP, -GQ)
-
-# Create a subset for HH data to join later
-data_HH <- subset(data, select = c(HHWT, PERNUM, PERWT, SERIAL, HHINCOME,AGE, RACE, RACED, SEX, HHTYPE, RELATE, RELATED, EMPSTAT, LABFORCE))
-
-# Household data: size, child present, senior present, and income category
-
-# Number of HH members, HHSize
-# Every person in the same household, ie. sharing the same SERIALNO
-HHSize <- data_HH %>%
-  dplyr::group_by(SERIAL) %>%
-  dplyr::summarise(HHSize = n())
-
-data <- data %>% right_join(HHSize, by=c("SERIAL"))
-rm(HHSize)
- 
-# Presence of children, ChildPresent
-# Census def of children: All persons under 18, excluding people
-# who maintain households, families, or subfamilies as
-# a reference person or spouse
-
-# For us, there is a children present (ChildPresent ==1) if
-# there is at least one person under 18 who is not a reference person or spouse
-# If no one meets these characteristics,
-# then there is no child present (ChildPresent ==0)
-
-HHChild <- subset(data_HH, select = c(SERIAL, RELATE, AGE)) %>%
-  mutate(
-    IsChild = if_else(
-      !(RELATE %in% c(1, 2)) & AGE < 18,
-      1,
-      0
+ACS_list <- lapply(
+  years,
+  function(yr) {
+    process_ipums(
+      yr = yr,
+      ipums_file = ipums_files[[as.character(yr)]],
+      cpi_value = cpi[as.character(yr)],
+      target_cpi = target_cpi
     )
-  ) %>%
-  dplyr::group_by(SERIAL) %>%
-  dplyr::summarize(
-    ChildPresent = max(IsChild, na.rm = TRUE),
-    .groups = "drop"
-  )
+  }
+)
 
-data<- data %>% right_join(HHChild, by=c("SERIAL"))
-rm(HHChild)
-
-# Presence of 65+ (inclusive), SeniorPresent
-# 0 no, 1 yes
-
-HHSenior <- subset(data_HH, select = c(SERIAL, AGE)) %>%
-  mutate(SeniorPresent = if_else(AGE>=65,1,0)) %>%
-  dplyr::group_by(SERIAL) %>%
-  dplyr::summarise(SeniorPresent = max(SeniorPresent, na.rm=TRUE))
-
-data <- data %>% right_join(HHSenior, by=c("SERIAL"))
-rm(HHSenior )
-
-# Labor force (LF)
-# 0 no, 1 yes
-# Assume in LF if age between 16 and 70 and in labor force,
-# LABFORCE codes 0 = N/A, 1 = no, 2 yes, 9 = unknown 
-
-data <- data %>%
-  mutate(LF = if_else((AGE>=16 & AGE<=70) & LABFORCE==2, 1, 0 ))
-
- 
-
-# Sex
-# original coding 1 = male 2 = female 9 = missing blank
-# recoding 0 female, 1 male
-
-data <- data %>% 
-  mutate(SEX = if_else(SEX == 1, 1, 0))
-
-# Age categories
-# Category 1: less than 15, Category 2: 15 (inclusive) to 25,
-# Category 3: 25 (inclusive) to 70, Category 4: 70 and older
-
-data <- data %>%
-  mutate(AgeCode = case_when(AGE<15 ~ 1,
-                    AGE>=15 & AGE<25 ~ 2,
-                    AGE>=25 & AGE<70 ~ 3,
-                    AGE>=70 ~ 4,
-                    TRUE ~ NA))
-
-### Compress into unique Households, HH ###
-
-data<- data %>%
-  filter(RELATE==1)
-
-## create factor variables
-
-# drop incomes less than zero 
-data <- data %>% filter(HHINCOME > 0)
-
-## san diego 2019 CPI =299.433
-## san diego 2022 CPI = 344.416	
-## 2019 * (2022cpi/2019cpi) = 2022 dollars
-
-data <- data %>%
-  mutate(ADJ_HHINCOME = HHINCOME*(344.416/299.433))
-
-#establish where we are going to cut the continuous variable
-cut_points <- c(0, 15000, 30000, 45000, 60000, 75000, 100000, 125000, 150000, 200000, 300000, 500000, 700000, 900000, Inf)
-#there are 15 cut points and 14 categories, we could just set num_interval to 14
-#but this way if we ever change the categories, it will auto adjust
-num_intervals <- length(cut_points) - 1
-
-#creates a series of labels Inc1, Inc2, Inc3,...,IncN N= # categories
-incrementing_labels <- paste0("Inc", 1:num_intervals)
-
-# creates the ordered factor variable Income_Cat left closed for each cut
-data <- data %>%
-  mutate(IncCat= cut(
-    ADJ_HHINCOME, # the continuous variable being cut
-    breaks = cut_points, # where to make the cuts
-    labels = incrementing_labels, # how to label each bracket
-    right = FALSE, # left close eg Inc1 is [0,15000) Inc2 [15000,30000)
-    ordered_result = TRUE, # this is an ordered factor so Inc1< Inc2<...<Inc14
-                 )
-    ) # preserves the bucket variable after the next step
-
-
-# Create the 14 binary columns (Inc1 to Inc14)  
-dummies <- as.data.frame(model.matrix(~ IncCat - 1, data = data))
-
-# Remove the "IncCat" prefix so column names are simply Inc1, Inc2, ..., Inc14
-colnames(dummies) <- sub("^IncCat", "", colnames(dummies))
-
-# Bind them to the dataset 
-data <- bind_cols(data, dummies)
-
-
-ACS_2019_1Y <- data  
-# # Collapse into households, this keeps the first row of each SERIALNO
-# HH <- data %>% distinct(SERIAL, .keep_all = TRUE)
-
-rm(data, data_HH, ddi, ipums_data, years, year_check, dummies)
-
-
-
+names(ACS_list) <- paste0("ACS_", years, "_1Y")
 
 ```
 
-
-
-## 2. Load and clean 2022 single year ACS data
-
-The DDI XML file describes the variables,
-labels, and structure of the IPUMS extract.
-
-```{r load-metadata}
-#load the data
-
-
-# make sure the year is right
-
-ddi <- read_ipums_ddi(ipums_2022_1year)
-
-year_check <- read_ipums_micro(
-  ddi,
-  vars = "YEAR"
-)
-
-## check it is the right year before we even fully load the dataset
-years <- unique(year_check$YEAR)
-
-if (!all(years == 2022)) {
-  stop(
-    sprintf(
-      "Expected YEAR=2022. Found: %s",
-      paste(sort(years), collapse = ", ")
-    )
-  )
-}
-
-rm(year_check)
-
-#load the full dataset
-ipums_data <- read_ipums_micro(ddi)
-
-# Only work with housing units (TYPEHUGQ ==1)
-# So, we are excluding group quarters (TYPEHUGQ == 2 and TYPEHUGQ 3)
-# also limiting to San Diego county
-
-data<- ipums_data %>% 
-  filter(GQ == 1,
-         COUNTYFIP==73)
-
-# Confirming state and county only San Diego and CA and that our GQ filter worked
-
-stopifnot(all(data$STATEFIP == 6))
-stopifnot(all(data$COUNTYFIP==73))
-stopifnot(all(data$GQ==1))
-
-# getting rid of statefips, countyfips, group quarters 
-# all observations are now identical for these variables 
-# the replication weights are not needed for complex survey design 
-data <- data %>%
-  select(-starts_with("REPWT"), -STATEFIP, -COUNTYFIP, -GQ)
-
-## create a subset for HH data to join later
-data_HH <- subset(data, select = c(HHWT, PERNUM, PERWT, SERIAL, HHINCOME,AGE, RACE, RACED, SEX, HHTYPE, RELATE, RELATED, EMPSTAT, LABFORCE))
-
-### Household data: size, child present, senior present, and income cat ###
-
-# Number of HH members, HHSize
-# Every person in the same household, ie. sharing the same SERIALNO
-HHSize <- data_HH %>%
-  dplyr::group_by(SERIAL) %>%
-  dplyr::summarise(HHSize = n())
-
-data <- data %>% right_join(HHSize, by=c("SERIAL"))
-rm(HHSize)
- 
-# Presence of children, ChildPresent
-# Census def of children: All persons under 18, excluding people
-# who maintain households, families, or subfamilies as
-# a reference person or spouse
-
-# For us, there is a children present (ChildPresent ==1) if
-# there is at least one person under 18 who is not a reference person or spouse
-# If no one meets these characteristics,
-# then there is no child present (ChildPresent ==0)
-
-HHChild <- subset(data_HH, select = c(SERIAL, RELATE, AGE)) %>%
-  mutate(
-    IsChild = if_else(
-      !(RELATE %in% c(1, 2)) & AGE < 18,
-      1,
-      0
-    )
-  ) %>%
-  dplyr::group_by(SERIAL) %>%
-  dplyr::summarize(
-    ChildPresent = max(IsChild, na.rm = TRUE),
-    .groups = "drop"
-  )
-
-data<- data %>% right_join(HHChild, by=c("SERIAL"))
-rm(HHChild)
-
-# Presence of 65+ (inclusive), SeniorPresent
-# 0 no, 1 yes
-
-HHSenior <- subset(data_HH, select = c(SERIAL, AGE)) %>%
-  mutate(SeniorPresent = if_else(AGE>=65,1,0)) %>%
-  dplyr::group_by(SERIAL) %>%
-  dplyr::summarise(SeniorPresent = max(SeniorPresent, na.rm=TRUE))
-
-data <- data %>% right_join(HHSenior, by=c("SERIAL"))
-rm(HHSenior )
-
-# Labor force (LF)
-# 0 no, 1 yes
-# Assume in LF if age between 16 and 70 and in labor force,
-# LABFORCE codes 0 = N/A, 1 = no, 2 yes, 9 = unknown 
-
-data <- data %>%
-  mutate(LF = if_else((AGE>=16 & AGE<=70) & LABFORCE==2, 1, 0 ))
-
- 
-
-# Sex
-# original coding 1 = male 2 = female 9 = missing blank
-# recoding 0 female, 1 male
-
-data <- data %>% 
-  mutate(SEX = if_else(SEX == 1, 1, 0))
-
-# Age categories
-# Category 1: less than 15, Category 2: 15 (inclusive) to 25,
-# Category 3: 25 (inclusive) to 70, Category 4: 70 and older
-
-data <- data %>%
-  mutate(AgeCode = case_when(AGE<15 ~ 1,
-                    AGE>=15 & AGE<25 ~ 2,
-                    AGE>=25 & AGE<70 ~ 3,
-                    AGE>=70 ~ 4,
-                    TRUE ~ NA))
-
-### Compress into unique Households, HH ###
-
-data<- data %>%
-  filter(RELATE==1)
-
-## create factor variables
-
-# drop incomes less than zero 
-data <- data %>% filter(HHINCOME > 0)
-
-# we adjust to 2022 base year so the adjustment here is 1 but putting this in
-# to keep the code consistent for a later join DF
-data <-data %>%
-    mutate(ADJ_HHINCOME = HHINCOME)
-
-#establish where we are going to cut the continuous variable
-cut_points <- c(0, 15000, 30000, 45000, 60000, 75000, 100000, 125000, 150000, 200000, 300000, 500000, 700000, 900000, Inf)
-#there are 15 cut points and 14 categories, we could just set num_interval to 14
-#but this way if we ever change the categories, it will auto adjust
-num_intervals <- length(cut_points) - 1
-
-#creates a series of labels Inc1, Inc2, Inc3,...,IncN N= # categories
-incrementing_labels <- paste0("Inc", 1:num_intervals)
-
-# creates the ordered factor variable Income_Cat left closed for each cut
-data <- data %>%
-  mutate(IncCat= cut(
-    ADJ_HHINCOME, # the continuous variable being cut
-    breaks = cut_points, # where to make the cuts
-    labels = incrementing_labels, # how to label each bracket
-    right = FALSE, # left close eg Inc1 is [0,15000) Inc2 [15000,30000)
-    ordered_result = TRUE, # this is an ordered factor so Inc1< Inc2<...<Inc14
-                 )
-    ) # preserves the bucket variable after the next step
-
-
-# Create the 14 binary columns (Inc1 to Inc14)  
-dummies <- as.data.frame(model.matrix(~ IncCat - 1, data = data))
-
-# Remove the "IncCat" prefix so column names are simply Inc1, Inc2, ..., Inc14
-colnames(dummies) <- sub("^IncCat", "", colnames(dummies))
-
-# Bind them to the dataset 
-data <- bind_cols(data, dummies)
-
-ACS_2022_1Y <- data  
-# # Collapse into households, this keeps the first row of each SERIALNO
-# HH <- data %>% distinct(SERIAL, .keep_all = TRUE)
-
-rm(data, data_HH, ddi, ipums_data, years, dummies)
-
-
-```
- 
-## 2. Load and clean 2024 single year ACS data
-
-The DDI XML file describes the variables,
-labels, and structure of the IPUMS extract.
-
-```{r load-metadata}
-#load the data
-
-
-# make sure the year is right
-
-ddi <- read_ipums_ddi(ipums_2024_1year)
-
-year_check <- read_ipums_micro(
-  ddi,
-  vars = "YEAR"
-)
-
-## check it is the right year before we even fully load the dataset
-years <- unique(year_check$YEAR)
-
-if (!all(years == 2024)) {
-  stop(
-    sprintf(
-      "Expected YEAR=2022. Found: %s",
-      paste(sort(years), collapse = ", ")
-    )
-  )
-}
-
-rm(year_check)
-
-#load the full dataset
-ipums_data <- read_ipums_micro(ddi)
-
-# Only work with housing units (TYPEHUGQ ==1)
-# So, we are excluding group quarters (TYPEHUGQ == 2 and TYPEHUGQ 3)
-# also limiting to San Diego county
-
-data<- ipums_data %>% 
-  filter(GQ == 1,
-         COUNTYFIP==73)
-
-# Confirming state and county only San Diego and CA and that our GQ filter worked
-
-stopifnot(all(data$STATEFIP == 6))
-stopifnot(all(data$COUNTYFIP==73))
-stopifnot(all(data$GQ==1))
-
-# getting rid of statefips, countyfips, group quarters 
-# all observations are now identical for these variables 
-# the replication weights are not needed for complex survey design 
-data <- data %>%
-  select(-starts_with("REPWT"), -STATEFIP, -COUNTYFIP, -GQ)
-
-## create a subset for HH data to join later
-data_HH <- subset(data, select = c(HHWT, PERNUM, PERWT, SERIAL, HHINCOME,AGE, RACE, RACED, SEX, HHTYPE, RELATE, RELATED, EMPSTAT, LABFORCE))
-
-### Household data: size, child present, senior present, and income cat ###
-
-# Number of HH members, HHSize
-# Every person in the same household, ie. sharing the same SERIALNO
-HHSize <- data_HH %>%
-  dplyr::group_by(SERIAL) %>%
-  dplyr::summarise(HHSize = n())
-
-data <- data %>% right_join(HHSize, by=c("SERIAL"))
-rm(HHSize)
- 
-# Presence of children, ChildPresent
-# Census def of children: All persons under 18, excluding people
-# who maintain households, families, or subfamilies as
-# a reference person or spouse
-
-# For us, there is a children present (ChildPresent ==1) if
-# there is at least one person under 18 who is not a reference person or spouse
-# If no one meets these characteristics,
-# then there is no child present (ChildPresent ==0)
-
-HHChild <- subset(data_HH, select = c(SERIAL, RELATE, AGE)) %>%
-  mutate(
-    IsChild = if_else(
-      !(RELATE %in% c(1, 2)) & AGE < 18,
-      1,
-      0
-    )
-  ) %>%
-  dplyr::group_by(SERIAL) %>%
-  dplyr::summarize(
-    ChildPresent = max(IsChild, na.rm = TRUE),
-    .groups = "drop"
-  )
-
-data<- data %>% right_join(HHChild, by=c("SERIAL"))
-rm(HHChild)
-
-# Presence of 65+ (inclusive), SeniorPresent
-# 0 no, 1 yes
-
-HHSenior <- subset(data_HH, select = c(SERIAL, AGE)) %>%
-  mutate(SeniorPresent = if_else(AGE>=65,1,0)) %>%
-  dplyr::group_by(SERIAL) %>%
-  dplyr::summarise(SeniorPresent = max(SeniorPresent, na.rm=TRUE))
-
-data <- data %>% right_join(HHSenior, by=c("SERIAL"))
-rm(HHSenior )
-
-# Labor force (LF)
-# 0 no, 1 yes
-# Assume in LF if age between 16 and 70 and in labor force,
-# LABFORCE codes 0 = N/A, 1 = no, 2 yes, 9 = unknown 
-
-data <- data %>%
-  mutate(LF = if_else((AGE>=16 & AGE<=70) & LABFORCE==2, 1, 0 ))
-
- 
-
-# Sex
-# original coding 1 = male 2 = female 9 = missing blank
-# recoding 0 female, 1 male
-
-data <- data %>% 
-  mutate(SEX = if_else(SEX == 1, 1, 0))
-
-# Age categories
-# Category 1: less than 15, Category 2: 15 (inclusive) to 25,
-# Category 3: 25 (inclusive) to 70, Category 4: 70 and older
-
-data <- data %>%
-  mutate(AgeCode = case_when(AGE<15 ~ 1,
-                    AGE>=15 & AGE<25 ~ 2,
-                    AGE>=25 & AGE<70 ~ 3,
-                    AGE>=70 ~ 4,
-                    TRUE ~ NA))
-
-### Compress into unique Households, HH ###
-
-data<- data %>%
-  filter(RELATE==1)
-
-## create factor variables
-
-# drop incomes less than zero 
-data <- data %>% filter(HHINCOME > 0)
-
-## san diego 2024 CPI =373.321
-## san diego 2022 CPI = 344.416	
-## 2024 * (2022cpi/2024cpi) = 2022 dollars
-
-data <-data %>%
-    mutate(ADJ_HHINCOME = HHINCOME*(344.416/373.321))
-
-#establish where we are going to cut the continuous variable
-cut_points <- c(0, 15000, 30000, 45000, 60000, 75000, 100000, 125000, 150000, 200000, 300000, 500000, 700000, 900000, Inf)
-#there are 15 cut points and 14 categories, we could just set num_interval to 14
-#but this way if we ever change the categories, it will auto adjust
-num_intervals <- length(cut_points) - 1
-
-#creates a series of labels Inc1, Inc2, Inc3,...,IncN N= # categories
-incrementing_labels <- paste0("Inc", 1:num_intervals)
-
-# creates the ordered factor variable Income_Cat left closed for each cut
-data <- data %>%
-  mutate(IncCat= cut(
-    ADJ_HHINCOME, # the continuous variable being cut
-    breaks = cut_points, # where to make the cuts
-    labels = incrementing_labels, # how to label each bracket
-    right = FALSE, # left close eg Inc1 is [0,15000) Inc2 [15000,30000)
-    ordered_result = TRUE, # this is an ordered factor so Inc1< Inc2<...<Inc14
-                 )
-    ) # preserves the bucket variable after the next step
-
-
-# Create the 14 binary columns (Inc1 to Inc14)  
-dummies <- as.data.frame(model.matrix(~ IncCat - 1, data = data))
-
-# Remove the "IncCat" prefix so column names are simply Inc1, Inc2, ..., Inc14
-colnames(dummies) <- sub("^IncCat", "", colnames(dummies))
-
-# Bind them to the dataset 
-data <- bind_cols(data, dummies)
-
-ACS_2024_1Y <- data  
-
-# # Collapse into households, this keeps the first row of each SERIALNO
-# HH <- data %>% distinct(SERIAL, .keep_all = TRUE)
-
-rm(data, data_HH, ddi, ipums_data, years, dummies)
-
-
-```
  
 ## Create HH level data for 2022 5 year ACS
 ```{r}
@@ -647,7 +311,7 @@ rm(data, data_HH, ddi, ipums_data, years, dummies)
 years <- c(2019, 2022, 2024)
 
 ACS_Means <- lapply(years, function(yr) {
-  get(paste0("ACS_", yr, "_1Y")) %>%
+  ACS_list[[paste0("ACS_", yr, "_1Y")]] %>%
     summarise(
       YEAR = first(YEAR),
       ADJ_HHINCOME = weighted.mean(ADJ_HHINCOME, HHWT),
@@ -658,6 +322,7 @@ ACS_Means <- lapply(years, function(yr) {
       SEX = weighted.mean(SEX, HHWT),
       LF = weighted.mean(LF, HHWT),
       HHSize = weighted.mean(HHSize, HHWT),
+      placebo = weighted.mean(placebo),
       NHH = sum(HHWT)
     )
 })
@@ -679,7 +344,7 @@ years <- c(2019, 2022, 2024)
 
 ACS_IncCat_Counts <- bind_rows(
   lapply(years, function(yr) {
-    get(paste0("ACS_", yr, "_1Y")) %>%
+    ACS_list[[paste0("ACS_", yr, "_1Y")]] %>%
       group_by(IncCat) %>%
       summarise(
         HH_Count = sum(HHWT, na.rm = TRUE),
@@ -702,106 +367,64 @@ ACS_IncCat_Counts <- bind_rows(
 
 ```{r}
 
-# Create output directory if it does not exist
+# Create output directory if needed
 dir.create(
   cfg$paths$output_dir,
   recursive = TRUE,
   showWarnings = FALSE
 )
 
-# Construct output file path for 2019 1 year
-output_2019 <- file.path(
-  cfg$paths$output_dir,
-  cfg$IPUMS$output_file_2019_1year
+# Map years to output filenames in config
+output_files <- list(
+  "2019" = cfg$IPUMS$output_file_2019_1year,
+  "2022" = cfg$IPUMS$output_file_2022_1year,
+  "2024" = cfg$IPUMS$output_file_2024_1year
 )
 
 
-# Write CSV
-write.csv(
-  ACS_2019_1Y,
-  output_2019,
-  row.names = FALSE
-)
 
-cat("Dataset saved to:", output_2019, "\n")
+verify_export <- function(df, output_file) {
 
-# Read the CSV back for verification
-exported_data <- read.csv(output_2019)
+  write.csv(
+    df,
+    output_file,
+    row.names = FALSE
+  )
 
-# Verify dimensions and column names
-stopifnot(
-  nrow(exported_data) == nrow(ACS_2019_1Y),
-  identical(names(exported_data), names(ACS_2019_1Y))
-)
+  cat("Dataset saved to:", output_file, "\n")
 
-cat("Export verification passed.\n")
-cat("Rows:", nrow(exported_data), "\n")
-cat("Columns:", ncol(exported_data), "\n")
+  exported_data <- read.csv(output_file)
 
+  stopifnot(
+    nrow(exported_data) == nrow(df),
+    identical(names(exported_data), names(df))
+  )
 
-# Construct output file path for 2022 1 year
-output_2022 <- file.path(
-  cfg$paths$output_dir,
-  cfg$IPUMS$output_file_2022_1year
-)
-
-# Write CSV
-write.csv(
-  ACS_2022_1Y,
-  output_2022,
-  row.names = FALSE
-)
-
-cat("Dataset saved to:", output_2022, "\n")
-
-# Read the CSV back for verification
-exported_data <- read.csv(output_2022)
-
-# Verify dimensions and column names
-stopifnot(
-  nrow(exported_data) == nrow(ACS_2022_1Y),
-  identical(names(exported_data), names(ACS_2022_1Y))
-)
-
-cat("Export verification passed.\n")
-cat("Rows:", nrow(exported_data), "\n")
-cat("Columns:", ncol(exported_data), "\n")
-
-# Construct output file path for 2024 1 year
-output_2024 <- file.path(
-  cfg$paths$output_dir,
-  cfg$IPUMS$output_file_2024_1year
-)
-
-# Write CSV
-write.csv(
-  ACS_2024_1Y,
-  output_2024,
-  row.names = FALSE
-)
-
-cat("Dataset saved to:", output_2024, "\n")
-
-# Read the CSV back for verification
-exported_data <- read.csv(output_2024)
-
-# Verify dimensions and column names
-stopifnot(
-  nrow(exported_data) == nrow(ACS_2024_1Y),
-  identical(names(exported_data), names(ACS_2024_1Y))
-)
-
-cat("Export verification passed.\n")
-cat("Rows:", nrow(exported_data), "\n")
-cat("Columns:", ncol(exported_data), "\n")
+  cat("Export verification passed.\n")
+  cat("Rows:", nrow(exported_data), "\n")
+  cat("Columns:", ncol(exported_data), "\n\n")
+}
 
 
-## export the means
+# Export each ACS dataset
+for (yr in years) {
 
+  verify_export(
+    ACS_list[[paste0("ACS_", yr, "_1Y")]],
+    file.path(
+      cfg$paths$output_dir,
+      output_files[[as.character(yr)]]
+    )
+  )
+
+}
+
+# export means
 output_means <- file.path(
   cfg$paths$output_dir,
   cfg$IPUMS$outout_file_ACS_1year_means
 )
+
 
 # Write CSV
 write.csv(
@@ -810,27 +433,24 @@ write.csv(
   row.names = FALSE
 )
 
-cat("Dataset saved to:", output_means, "\n")
 
-# Read the CSV back for verification
-exported_data <- read.csv(output_means)
-
-# Verify dimensions and column names
-stopifnot(
-  nrow(exported_data) == nrow(ACS_1year_means),
-  identical(names(exported_data), names(ACS_1year_means))
+verify_export(
+  ACS_1year_means,
+  file.path(
+    cfg$paths$output_dir,
+    cfg$IPUMS$outout_file_ACS_1year_means
+  )
 )
 
-cat("Export verification passed.\n")
-cat("Rows:", nrow(exported_data), "\n")
-cat("Columns:", ncol(exported_data), "\n")
 
-## export the distributions
+
+# Export Distributions 
 
 output_dis <- file.path(
   cfg$paths$output_dir,
   cfg$IPUMS$output_file_ACS_1year_IncDis
 )
+
 
 # Write CSV
 write.csv(
@@ -839,21 +459,13 @@ write.csv(
   row.names = FALSE
 )
 
-cat("Dataset saved to:", output_dis, "\n")
-
-# Read the CSV back for verification
-exported_data <- read.csv(output_dis)
-
-# Verify dimensions and column names
-stopifnot(
-  nrow(exported_data) == nrow(ACS_IncCat_Counts),
-  identical(names(exported_data), names(ACS_IncCat_Counts))
+verify_export(
+  ACS_IncCat_Counts,
+  file.path(
+    cfg$paths$output_dir,
+    cfg$IPUMS$output_file_ACS_1year_IncDis
+  )
 )
-
-cat("Export verification passed.\n")
-cat("Rows:", nrow(exported_data), "\n")
-cat("Columns:", ncol(exported_data), "\n")
-
 
 #clean up the memory
 rm(list = ls())
