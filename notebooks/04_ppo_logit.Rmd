@@ -547,7 +547,7 @@ Note that the `echo = FALSE` parameter was added to the code chunk to prevent pr
 Weighted_IPUMS_19 <-as_survey(ACS_1year_2019, id=CLUSTER,
                            weights=HHWT,
                            strata=STRATA,
-                           nest=TRUE)mo
+                           nest=TRUE)
 
 Weighted_IPUMS_24 <-as_survey(ACS_1year_2024, id=CLUSTER,
                            weights=HHWT,
@@ -556,13 +556,13 @@ Weighted_IPUMS_24 <-as_survey(ACS_1year_2024, id=CLUSTER,
 
 ppo_model_19 <- svy_vglm(
   formula = formula,
-  family = cumulative(link = "logitlink", parallel = TRUE ~  SEX),
+  family = cumulative(link = "logitlink", parallel = TRUE ~ -1+ SEX),
   design = Weighted_IPUMS_19
 )
 
 ppo_model_24 <- svy_vglm(
   formula = formula,
-  family = cumulative(link = "logitlink", parallel = TRUE ~  SEX),
+  family = cumulative(link = "logitlink", parallel = TRUE ~ -1+ SEX),
   design = Weighted_IPUMS_24
 )
 

@@ -344,10 +344,9 @@ joined_models <- all_models_long %>% right_join(obsered_long, by=c("IncCat", "YE
 
 #restoring ordered factor nature to the ordered factor variable
 joined_models$IncCat <- ordered(joined_models$IncCat, levels = paste0("Inc", 1:14))
-
- # calculate RMSE step by step then combine into one step
  
- #error
+ 
+ #Root mean squared error calculation 
  joined_models_RMSE <- joined_models %>%
    mutate(sq_error = (predicted_HH - observed_HH)^2) %>%
    filter_out(model_year==YEAR) %>%

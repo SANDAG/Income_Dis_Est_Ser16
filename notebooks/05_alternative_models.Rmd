@@ -6,24 +6,755 @@ date: "2026-11-24"
 
 ```{r setup, include=FALSE}
 knitr::opts_chunk$set(echo = TRUE)
+
+library("dplyr") # data cleaning and handling
+library("modelsummary") # outputting results where needed
+library(tidyr) 
+library(broom)
+library(purrr)
+library(srvyr) # used for logit regressions with complex survey designs
+library(svyVGAM) # used for PPO regressions with complex survey designs 
+
+# Load project configuration
+source(here::here("R", "load_config.R"))
+cfg <- load_config()
+ 
+## file path for means and distributions
+
+input_means <- file.path(
+  cfg$paths$output_dir,
+  cfg$IPUMS$outout_file_ACS_1year_means
+)
+
+input_dis <- file.path(
+  cfg$paths$output_dir,
+  cfg$IPUMS$output_file_ACS_1year_IncDis
+)
+
+years <- c("2019", "2024")
+
+# File lists from config
+data_files <- list(
+  `2019` = cfg$IPUMS$output_file_2019_1year,
+  `2024` = cfg$IPUMS$output_file_2024_1year
+)
+
+# Construct input file paths in a loop
+for (yr in years) {
+
+  assign(
+    paste0("input_", yr),
+    file.path(
+      cfg$paths$output_dir,
+      data_files[[yr]]
+    )
+  )
+
+
+}
+
+x_vector <- ("HHSize + ChildPresent + SeniorPresent + AGE + LF + SEX+HHSize*ChildPresent") 
+
+
+formula <- as.formula(
+  paste("IncCat ~", x_vector)
+)
+
+
+ stopifnot(file.exists(input_2019))
+stopifnot(file.exists(input_2024))
+stopifnot(file.exists(input_means))
+stopifnot(file.exists(input_dis))
+
 ```
 
-## R Markdown
 
-This is an R Markdown document. Markdown is a simple formatting syntax for authoring HTML, PDF, and MS Word documents. For more details on using R Markdown see <http://rmarkdown.rstudio.com>.
+# load the data 
 
-When you click the **Knit** button a document will be generated that includes both content as well as the output of any embedded R code chunks within the document. You can embed an R code chunk like this:
+```{r}
+ 
 
-```{r cars}
-summary(cars)
+# Load data in a loop
+
+for (yr in years) {
+
+  assign(
+    paste0("ACS_", yr, "_1Y"),
+    read.csv(
+      get(paste0("input_", yr))
+    )
+  )
+
+}
+
+# Load the means and distribution data which covers all years
+ACS_means <-read.csv(file.path(input_means))
+
+ACS_1year_dis <-read.csv(file.path(input_dis))
+
 ```
 
-## Including Plots
 
-You can also embed plots, for example:
+## PPO brant test
 
-```{r pressure, echo=FALSE}
-plot(pressure)
+```{r}
+
+brant_test_year <- function(yr, formula) {
+
+  ACS_data <- get(paste0("ACS_", yr, "_1Y"))
+  ACS_data <- ACS_data
+  
+  
+  ACS_data$IncCat <- ordered(
+    ACS_data$IncCat,
+    levels = paste0("Inc", 1:14)
+  )
+
+
+  Weighted_IPUMS <- as_survey(
+    ACS_data,
+    id = CLUSTER,
+    weights = HHWT,
+    strata = STRATA,
+    nest = TRUE
+  )
+
+  #==================================================
+  # Ordered Logit
+  #==================================================
+
+  m1 <- svyolr(
+    formula,
+    design = Weighted_IPUMS
+  )
+
+  K <- length(m1$lev)
+  P <- length(m1$coef)
+
+  #==================================================
+  # Influence Function
+  #==================================================
+
+  get_infl <- function(k, formula, design) {
+
+    y <- formula[[2]]
+
+    formula[[2]] <- bquote(
+      I(as.numeric(.(y)) > .(k))
+    )
+
+    mk <- svyglm(
+      formula,
+      design,
+      family = quasibinomial,
+      influence = TRUE
+    )
+
+    list(
+      coef(mk),
+      attr(mk, "influence")
+    )
+  }
+
+  fits <- lapply(
+    1:(K - 1),
+    function(k) {
+      get_infl(k, formula, Weighted_IPUMS)
+    }
+  )
+
+  infs <- do.call(
+    cbind,
+    lapply(fits, "[[", 2)
+  )
+
+  combined_V <- vcov(
+    svytotal(
+      infs / weights(Weighted_IPUMS),
+      Weighted_IPUMS
+    )
+  )
+
+  coefs <- lapply(fits, "[[", 1)
+
+  #==================================================
+  # Directional Brant Test
+  #==================================================
+
+  B <- do.call(
+    c,
+    lapply(coefs, "[", -1)
+  )
+
+  intercept_idx <- 1 + (0:(K - 2)) * (P + 1)
+
+  VarB <- combined_V[
+    -intercept_idx,
+    -intercept_idx
+  ]
+
+  D_dir <- diag(P)
+
+  for (k in 2:(K - 1)) {
+    D_dir <- rbind(
+      D_dir,
+      diag(P)
+    )
+  }
+
+  D_dir <- cbind(
+    D_dir,
+    matrix(
+      0,
+      nrow = P * (K - 1),
+      ncol = K - 2
+    )
+  )
+
+  for (k in 1:(K - 2)) {
+
+    D_dir[
+      (P * k) + (1:P),
+      P + k
+    ] <- coefs[[k + 1]][-1]
+
+  }
+
+  VarBinv <- solve(VarB)
+
+  deltahat <- solve(
+    t(D_dir) %*% VarBinv %*% D_dir,
+    t(D_dir) %*% VarBinv %*% B
+  )
+
+  VarDelta <- solve(
+    t(D_dir) %*% VarBinv %*% D_dir
+  )
+
+  i <- P + (1:(K - 2))
+
+  brantTest_dir <- as.numeric(
+    deltahat[i] %*%
+      solve(VarDelta[i, i]) %*%
+      deltahat[i]
+  )
+
+  p_dir <- pchisq(
+    brantTest_dir,
+    df = (K - 2),
+    lower.tail = FALSE
+  )
+
+  #==================================================
+  # Standard Brant Test
+  #==================================================
+
+  D_std <- matrix(
+    0,
+    nrow = P * (K - 2),
+    ncol = P * (K - 1)
+  )
+
+  for (k in 1:(K - 2)) {
+
+    row_idx <- ((k - 1) * P + 1):(k * P)
+
+    col_idx_1 <- 1:P
+
+    col_idx_k <- (k * P + 1):((k + 1) * P)
+
+    D_std[row_idx, col_idx_1] <- diag(P)
+
+    D_std[row_idx, col_idx_k] <- -diag(P)
+
+  }
+
+  diff_B <- D_std %*% B
+
+  Var_diff <- D_std %*% VarB %*% t(D_std)
+
+  X2_omnibus <- as.numeric(
+    t(diff_B) %*%
+      solve(Var_diff) %*%
+      diff_B
+  )
+
+  df_omnibus <- P * (K - 2)
+
+  p_omnibus <- pchisq(
+    X2_omnibus,
+    df = df_omnibus,
+    lower.tail = FALSE
+  )
+
+  #==================================================
+  # Results Table
+  #==================================================
+
+  coef_names <- names(m1$coef)
+
+  results <- data.frame(
+    Test = c(
+      "Omnibus (Directional)",
+      "Omnibus (Standard)",
+      coef_names
+    ),
+    Chi2 = NA,
+    df = NA,
+    p_value = NA
+  )
+
+  results[1, 2:4] <- c(
+    brantTest_dir,
+    K - 2,
+    p_dir
+  )
+
+  results[2, 2:4] <- c(
+    X2_omnibus,
+    df_omnibus,
+    p_omnibus
+  )
+
+  for (p in 1:P) {
+
+    p_rows <- seq(
+      from = p,
+      to = P * (K - 2),
+      by = P
+    )
+
+    D_p <- D_std[
+      p_rows,
+      ,
+      drop = FALSE
+    ]
+
+    diff_p <- D_p %*% B
+
+    Var_p <- D_p %*% VarB %*% t(D_p)
+
+    X2_p <- as.numeric(
+      t(diff_p) %*%
+        solve(Var_p) %*%
+        diff_p
+    )
+
+    p_val <- pchisq(
+      X2_p,
+      df = K - 2,
+      lower.tail = FALSE
+    )
+
+    results[p + 2, 2:4] <- c(
+      X2_p,
+      K - 2,
+      p_val
+    )
+  }
+
+  results$Chi2 <- round(results$Chi2, 3)
+  results$p_value <- round(results$p_value, 4)
+
+  results$YEAR <- yr
+
+
+list(
+  year = yr,
+  results = results,
+  coefs = coefs,
+  combined_V = combined_V,
+  m1 = m1,
+  K = K,
+  P = P
+)
+
+
+
+}
+
+## separate plotting function
+
+
+plot_parallel_lines_year <- function(brant_obj) {
+
+  year <- brant_obj$year
+
+  coefs <- brant_obj$coefs
+  combined_V <- brant_obj$combined_V
+  m1 <- brant_obj$m1
+  K <- brant_obj$K
+  P <- brant_obj$P
+
+  conditional_V <- lapply(
+    1:(K - 1),
+    function(k) {
+
+      start_idx <- (k - 1) * (P + 1) + 2
+      end_idx   <- (k - 1) * (P + 1) + P + 1
+
+      diag(
+        combined_V[
+          start_idx:end_idx,
+          start_idx:end_idx
+        ]
+      )
+    }
+  )
+
+  res <- data.frame(
+    variable = rep(
+      names(coefs[[1]])[-1],
+      each = K - 1
+    ),
+    cutpoint = rep(
+      names(m1$zeta),
+      P
+    ),
+    estimate = as.vector(
+      do.call(rbind, coefs)[, -1]
+    ),
+    se = sqrt(
+      do.call(c, conditional_V)
+    )
+  )
+
+  res$cutpoint <- factor(
+    res$cutpoint,
+    levels = rev(names(m1$zeta)),
+    ordered = TRUE
+  )
+
+  res$lower <- res$estimate - 1.96 * res$se
+  res$upper <- res$estimate + 1.96 * res$se
+
+  ggplot(
+    res,
+    aes(
+      y = cutpoint,
+      colour = cutpoint
+    )
+  ) +
+    geom_point(
+      aes(x = estimate)
+    ) +
+    geom_linerange(
+      aes(
+        xmin = lower,
+        xmax = upper
+      )
+    ) +
+    facet_wrap(
+      ~ variable,
+      scales = "free"
+    ) +
+    theme(
+      legend.position = "none"
+    ) +
+    labs(
+      title = paste(
+        "Parallel Lines Diagnostic",
+        year
+      )
+    ) +
+    geom_vline(
+      aes(xintercept = z),
+      linetype = "dotted",
+      data = data.frame(
+        z = m1$coef,
+        variable = names(coefs[[1]])[-1]
+      )
+    )
+}
+
+brant_2024 <- brant_test_year(
+  2024,
+  formula = formula
+)
+
+ 
+
+brant_results <- setNames(
+  lapply(
+    years,
+    brant_test_year,
+    formula = formula
+  ),
+  years
+)
+
+brant_plots <- lapply(
+  brant_results,
+  plot_parallel_lines_year
+)
+
+brant_tables <- bind_rows(
+  lapply(
+    brant_results,
+    function(x) x$results
+  )
+)
+
+print(brant_tables)
+
+for (yr in names(brant_plots)) {
+
+  print(
+    brant_plots[[yr]]
+  )
+
+}
+
 ```
 
-Note that the `echo = FALSE` parameter was added to the code chunk to prevent printing of the R code that generated the plot.
+
+
+# Rerunning all models with the alternative specification
+
+```{r}
+
+# modify this lookup table for the PPO models after running the brant tests
+ppo_specs <- list(
+  "2019" = FALSE ~ 1+HHSize + ChildPresent + SeniorPresent + AGE + LF + HHSize*ChildPresent,
+  "2024" = FALSE ~ 1+SEX
+)
+
+
+
+fit_models_year <- function(
+  yr,
+  x_vector,
+  ACS_means,
+  ppo_specs
+  ) 
+  {
+  ACS_data <- get(paste0("ACS_", yr, "_1Y"))
+
+  # select the row corresponding to the year
+  means_data <- ACS_means %>%
+    filter(YEAR == yr)
+
+  Weighted_IPUMS <- as_survey(
+    ACS_data,
+    id = CLUSTER,
+    weights = HHWT,
+    strata = STRATA,
+    nest = TRUE
+  )
+
+  y_vector <- names(
+    ACS_data %>%
+      select(num_range("Inc", 1:14))
+  )
+
+  # ==================================================
+  # Binary logit models
+  # ==================================================
+
+  logit_models <- lapply(y_vector, function(y) {
+
+    logit_formula <- reformulate(
+      termlabels = x_vector,
+      response = y
+    )
+
+    svyglm(
+      logit_formula,
+      design = Weighted_IPUMS,
+      family = quasibinomial(link = "logit")
+    )
+  })
+
+  names(logit_models) <- y_vector
+
+  logit_pred_matrix <- sapply(
+    logit_models,
+    predict,
+    newdata = means_data,
+    type = "response"
+  )
+
+  logit_predictions <- as.data.frame(logit_pred_matrix) %>%
+    mutate(YEAR = yr) %>%
+    relocate(YEAR)
+
+  # ==================================================
+  # Multinomial Logit
+  # ==================================================
+
+  mlogit_model <- svy_vglm(
+    as.formula(paste("IncCat ~", x_vector)),
+    design = Weighted_IPUMS,
+    family = multinomial(refLevel = "Inc1")
+  )
+
+  mlogit_predictions <- predict(
+    mlogit_model,
+    newdata = means_data,
+    type = "response"
+  )
+
+  ordered_cols <- stringr::str_sort(
+    colnames(mlogit_predictions),
+    numeric = TRUE
+  )
+
+  mlogit_predictions <- mlogit_predictions[
+    ,
+    ordered_cols,
+    drop = FALSE
+  ]
+
+  mlogit_predictions <- as.data.frame(
+    mlogit_predictions
+  ) %>%
+    mutate(YEAR = yr) %>%
+    relocate(YEAR)
+
+  # ==================================================
+  # Bespoke Model
+  # ==================================================
+
+  sig_coeffs_list <- purrr::map(
+    logit_models,
+    ~ broom::tidy(.x) %>%
+      filter(
+        p.value < 0.05,
+        term != "(Intercept)"
+      )
+  )
+
+  bespoke_models <- purrr::map2(
+    logit_models,
+    sig_coeffs_list,
+    ~ {
+
+      sig_terms <- .y$term
+
+      if (length(sig_terms) == 0) {
+        return(.x)
+      }
+
+      response_var <- all.vars(formula(.x))[1]
+
+      update(
+        .x,
+        formula = reformulate(
+          sig_terms,
+          response = response_var
+        )
+      )
+    }
+  )
+
+  names(bespoke_models) <- y_vector
+
+  bespoke_pred_matrix <- sapply(
+    bespoke_models,
+    predict,
+    newdata = means_data,
+    type = "response"
+  )
+
+  bespoke_predictions <- as.data.frame(
+    bespoke_pred_matrix
+  ) %>%
+    mutate(YEAR = yr) %>%
+    relocate(YEAR)
+  
+  # ==================================================
+  # PPO Model
+  # ==================================================
+
+  parallel_spec <- ppo_specs[[as.character(yr)]]
+
+  if (!is.null(parallel_spec)) {
+
+    ppo_formula <- as.formula(
+      paste("IncCat ~", x_vector)
+    )
+
+    ppo_model <- svy_vglm(
+      formula = ppo_formula,
+      family = cumulative(
+        link = "logitlink",
+        parallel = parallel_spec
+      ),
+      design = Weighted_IPUMS
+    )
+
+    ppo_predictions <- predict(
+      ppo_model,
+      newdata = means_data,
+      type = "response"
+    )
+
+    ordered_cols <- stringr::str_sort(
+      colnames(ppo_predictions),
+      numeric = TRUE
+    )
+
+    ppo_predictions <- ppo_predictions[
+      ,
+      ordered_cols,
+      drop = FALSE
+    ]
+
+    ppo_predictions <- as.data.frame(
+      ppo_predictions
+    ) %>%
+      mutate(YEAR = yr) %>%
+      relocate(YEAR)
+
+    ppo_note <- NULL
+
+  } else {
+
+    ppo_model <- NULL
+    ppo_predictions <- NULL
+
+    ppo_note <- paste(
+      "No PPO model specified for year",
+      yr
+    )
+
+    message(ppo_note)
+
+  }
+
+  
+  list(
+    year = yr,
+
+    logit_models = logit_models,
+    mlogit_model = mlogit_model,
+    bespoke_models = bespoke_models,
+    ppo_model = ppo_model,
+
+    logit_predictions = logit_predictions,
+    mlogit_predictions = mlogit_predictions,
+    bespoke_predictions = bespoke_predictions,
+    ppo_predictions = ppo_predictions,
+
+    ppo_note = ppo_note
+  )
+
+
+}
+
+years <- c(2019, 2024)
+
+model_results <- setNames(
+  lapply(
+    years,
+    fit_models_year,
+    x_vector = x_vector,
+    ACS_means = ACS_means,
+    ppo_specs = ppo_specs
+  ),
+  years
+)
+
+
+```
+
