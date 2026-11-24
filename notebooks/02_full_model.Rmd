@@ -43,7 +43,7 @@ input_dis <- file.path(
 ## independent variables to be used in the regressions below.  This means you only
 ## need to update them here.
 
-x_vector <- ("placebo") 
+x_vector <- ("HHSize + ChildPresent + SeniorPresent + AGE + LF + SEX")  
 
 stopifnot(file.exists(input_2019))
 stopifnot(file.exists(input_2024))
@@ -81,7 +81,7 @@ models <- lapply(y_vector, function(y) {
   
   logitformula <- reformulate(termlabels = x_vector, response = y)
   
-  svyglm(logitformula, design = Weighted_IPUMS, family =  binomial (link = "logit"))
+  svyglm(logitformula, design = Weighted_IPUMS, family =  quasibinomial (link = "logit"))
 })
 
 ## adds the Inc# as the name of the lists stored in models, easier to call
